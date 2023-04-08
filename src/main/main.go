@@ -7,11 +7,7 @@ import (
 	"log"
 )
 
-var specURL = map[string]string{
-	"localhost:9000":       "a8ejpredirect",
-	"px.a8.net":            "a8ejpredirect",
-	"hb.afl.rakuten.co.jp": "pc",
-}
+
 
 var commonParams = []string{
 	"url", "redirect", "jump",
@@ -31,6 +27,11 @@ func main() {
 // redirector
 func redirector(w http.ResponseWriter, r *http.Request) {
 
+    urlParams := map[string][]string{}
+    urlParams["localhost:9000"]       = []string{"a8ejpredirect","pc"}
+    urlParams["px.a8.net"]            = []string{"a8ejpredirect"}
+    urlParams["hb.afl.rakuten.co.jp"] = []string{"pc"}
+
 	if r.URL.Path == "/favicon.ico" {
 		return
 	}
@@ -41,18 +42,24 @@ func redirector(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Request: ", r.Host, r.URL.Path, queries.Encode())
 
 		// Specified domains
-		if specParam, ok := specURL[r.Host]; ok {
-			if len(specParam) > 1 {
-				r.URL.Query()
-				log.Printf("param = %+v", specParam)
-				redirect := r.URL.Query().Get(specParam)
-				log.Printf("value = %+v", redirect)
-				if (len(redirect) > 5 && strings.HasPrefix(redirect, "http://") || strings.HasPrefix(redirect, "https://")) {	
-					log.Printf("redirect => ", redirect)
-					w.Header().Set("Location", redirect)
-					w.WriteHeader(http.StatusFound)
-					return
-				}
+		if param, ok := urlParams[r.Host]; ok {
+            size := len(param)
+			if size > 0 {
+                for i := 0; i < size; i++ {
+                    paramName := param[i]
+                    r.URL.Query()
+                    log.Printf("param = %+v", paramName)
+                    redirect := r.URL.Query().Get(paramName)
+                    if redirect != "" {
+                        log.Printf("value = %+v", redirect)
+                        if (len(redirect) > 5 && strings.HasPrefix(redirect, "http://") || strings.HasPrefix(redirect, "https://")) {	
+                            log.Printf("redirect => ", redirect)
+                            w.Header().Set("Location", redirect)
+                            w.WriteHeader(http.StatusFound)
+                            return
+                        }
+                    }
+                }
 			}
 		}
 

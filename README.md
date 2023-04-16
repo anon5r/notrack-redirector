@@ -30,7 +30,7 @@ $ docker build -t track-redir:latest -f docker/golang/Dockerfile .
 ### Running on Docker container
 
 ```shell
-$ docker run --rm --name redirgo -p 9000:9000 track-redir
+$ docker run --rm --name redirgo -p 9090:9090 track-redir
 ```
 
 
@@ -43,5 +43,5 @@ $ docker run --rm --name redirgo -p 9000:9000 track-redir
 $ go run src/main/main.go
 ```
 
-then you can go http://localhost:9000
+then you can go http://localhost:9090
 

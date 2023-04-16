@@ -18,7 +18,7 @@ If a specific parameter is included, it is taken as the URL to redirect to and a
 ## Go
 
 ```shell
-$ go build -o <any-path>/track-redirector src/main/main.go
+$ go build -o dist/track-redir src/main/main.go
 ```
 
 ## Docker
@@ -45,3 +45,10 @@ $ go run src/main/main.go
 
 then you can go http://localhost:9090
 
+
+# Supported track URL patterns
+
+- https://px.a8.net/svt/ejp?a8mat=http...
+- https://hb.afl.rakuten.co.jp/ichiba/123456abc....a6bc789d/...?pc=http...&m=http...
+- https://hb.afl.rakuten.co.jp/hgc/123456abc.....a6bc789d/...?pc=http...
+- https://ck.jp.ap.valuecommerce.com/servlet/referral?sid=...&pid=...&vc_url=http...

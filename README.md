@@ -30,7 +30,7 @@ $ docker build -t track-redir:latest -f docker/golang/Dockerfile .
 ### Running on Docker container
 
 ```shell
-$ docker run --rm --name redirgo -p 9090:9090 track-redir
+$ docker run --rm --name redirgo -p 9090:9000 track-redir
 ```
 
 

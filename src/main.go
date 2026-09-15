@@ -610,6 +610,8 @@ func newUpstreamClient() *http.Client {
 	}
 
 	transport := &http.Transport{
+		// プロキシ配下でも動作するよう、標準の環境変数を尊重する。
+		Proxy: http.ProxyFromEnvironment,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {

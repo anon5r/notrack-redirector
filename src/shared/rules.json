@@ -1,0 +1,54 @@
+{
+  "//": "Anti-Tracking URL Redirector の共有ルール定義。Go 実装 (src/main.go) と Cloudflare Worker 実装 (src/cloudfare-worker/worker.js) の双方がこのファイルを読み込む。",
+
+  "//trackers": "上流として接続を許可するトラッキングサービス。誰でも任意の URL を登録できる短縮 URL サービス (t.co, bit.ly など) を追加してはならない。追加するとオープンリダイレクタ化する。paths が空なら当該ホストの全パスを許可する。正規表現は Go と JavaScript の双方で解釈できる構文に限る。",
+  "trackers": [
+    { "host": "px.a8.net", "paths": ["^/svt/"] },
+    { "host": "hb.afl.rakuten.co.jp", "paths": ["^/ichiba/[\\w.\\-]+", "^/hgc/[\\w.\\-]+", "^/hsc/[\\w.\\-]+"] },
+    { "host": "ck.jp.ap.valuecommerce.com", "paths": ["^/servlet/referral"] },
+    { "host": "af.moshimo.com", "paths": ["^/af/c/click"] },
+    { "host": "t.afi-b.com", "paths": [] },
+    { "host": "click.linksynergy.com", "paths": [] }
+  ],
+
+  "//trackingParamPrefixes": "前方一致で除去するクエリパラメータ。",
+  "trackingParamPrefixes": [
+    "utm_", "mtm_", "pk_", "piwik_", "matomo_", "hsa_", "vero_", "oly_",
+    "trk_", "_bta_", "__hs", "ito_", "at_custom", "spm_"
+  ],
+
+  "//trackingParamNames": "完全一致で除去するクエリパラメータ。ref / pid / sid / cid のように正規の機能パラメータと衝突しうる名前はここには入れず、hostTrackingParams 側でホストを限定して扱う。",
+  "trackingParamNames": [
+    "gclid", "gclsrc", "dclid", "gbraid", "wbraid",
+    "fbclid", "msclkid", "yclid", "twclid", "ttclid",
+    "igshid", "igsh", "li_fat_id", "rdt_cid", "epik",
+    "s_kwcid", "ef_id", "mkt_tok", "wickedid", "_openstat",
+    "yadcid", "yadid", "_ga", "_gl", "__s",
+    "mc_cid", "mc_eid", "ml_subscriber", "ml_subscriber_hash",
+    "fb_action_ids", "fb_action_types", "fb_source", "fb_ref",
+    "action_object_map", "action_type_map", "action_ref_map",
+    "vc_lpp", "a8", "msockid"
+  ],
+
+  "//hostTrackingParams": "ホスト (サフィックス一致) ごとに追加で除去するパラメータ。汎用的に消すと壊れる名前をここで限定的に扱う。名前は小文字で記述する。",
+  "hostTrackingParams": [
+    {
+      "suffix": "amazon.co.jp",
+      "names": ["tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag",
+                "camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
+                "dib", "dib_tag", "content-id", "_encoding", "th"]
+    },
+    {
+      "suffix": "amazon.com",
+      "names": ["tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag",
+                "camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
+                "dib", "dib_tag", "content-id", "_encoding", "th"]
+    },
+    { "suffix": "rakuten.co.jp", "names": ["scid", "sc2id", "iasid", "rafcid", "l-id", "l2-id", "trflg", "bk"] },
+    { "suffix": "yahoo.co.jp", "names": ["sc_e", "sc_i", "mcr", "ei", "ark", "tpkgd"] },
+    { "suffix": "youtube.com", "names": ["si", "feature", "kw"] },
+    { "suffix": "youtu.be", "names": ["si", "feature"] },
+    { "suffix": "x.com", "names": ["s", "t", "ref_src", "ref_url"] },
+    { "suffix": "twitter.com", "names": ["s", "t", "ref_src", "ref_url"] }
+  ]
+}

@@ -32,10 +32,10 @@ carry no destination URL in their parameters at all.
 
 ## Security notes
 
-- Only hosts listed in `trackerRules` (Go) / `TRACKER_RULES` (Worker) are
-  fetched. **Never add a URL shortener** (`t.co`, `bit.ly`, ...) to that list:
-  anyone can register an arbitrary destination there, which would reintroduce
-  the open redirector problem.
+- Only hosts listed in `src/shared/rules.json` are fetched. **Never add a URL
+  shortener** (`t.co`, `bit.ly`, ...) to that list: anyone can register an
+  arbitrary destination there, which would reintroduce the open redirector
+  problem.
 - Redirect hops pointing at loopback, private, CGNAT, link-local or `.local`
   addresses are rejected (SSRF protection). In the Go build this is enforced at
   dial time against the resolved IP as well.
@@ -85,15 +85,19 @@ cannot dial raw IP addresses.
 # What gets stripped
 
 - Global exact matches: `gclid`, `fbclid`, `msclkid`, `yclid`, `ttclid`, `_ga`,
-  `mkt_tok`, ... 
+  `mkt_tok`, ...
 - Global prefixes: `utm_`, `mtm_`, `pk_`, `piwik_`, `hsa_`, `trk_`, ...
 - Host-scoped names, for parameters that are ambiguous in general:
   Amazon (`tag`, `linkCode`, `ascsubtag`, `ref`, ...), Rakuten (`scid`, `l-id`,
   ...), Yahoo, YouTube, X/Twitter.
 
-The Go and Worker implementations keep these lists — and the page markup —
-separately, since the Go build is a single file with no module setup.
-**Update both when changing a rule.**
+All of these lists live in `src/shared/rules.json`, which both implementations
+read: the Go build embeds it with `go:embed`, the Worker imports it at bundle
+time. Edit that one file to change a rule.
+
+Path patterns in it are regular expressions, so they must be valid in **both**
+Go's `regexp` and JavaScript's `RegExp`. The page markup is still written twice,
+once per implementation.
 
 
 # How to Build
@@ -101,7 +105,7 @@ separately, since the Go build is a single file with no module setup.
 ## Go
 
 ```shell
-$ go build -o dist/track-redir src/main/main.go
+$ go build -o dist/track-redir ./src
 ```
 
 ## Docker
@@ -116,11 +120,14 @@ $ docker build -t track-redir:latest -f docker/golang/Dockerfile .
 $ docker run --rm --name redirgo -p 9090:9000 track-redir
 ```
 
+The runtime image is `alpine` with `ca-certificates`, which the upstream HTTPS
+fetch needs.
+
 
 # Test
 
 ```shell
-$ go test src/main/main.go src/main/main_test.go
+$ go test ./src
 $ npm --prefix src/cloudfare-worker test
 ```
 
@@ -145,7 +152,7 @@ raw IP addresses, so the override value there must be a hostname.
 ## Go
 
 ```shell
-$ go run src/main/main.go
+$ go run ./src
 ```
 
 Then open <http://localhost:9000/> and paste a tracking URL into the form, or:
@@ -175,3 +182,17 @@ $ npm --prefix src/cloudfare-worker run dev
 - `https://af.moshimo.com/af/c/click?...`
 - `https://t.afi-b.com/...`
 - `https://click.linksynergy.com/...`
+
+
+# Layout
+
+```
+go.mod                          Go module for the Go build
+src/main.go                     Go implementation
+src/main_test.go
+src/shared/rules.json           Allowlist and tracking parameters, shared by both
+src/cloudfare-worker/worker.js  Cloudflare Worker implementation
+src/cloudfare-worker/wrangler.jsonc
+src/lambda/nodejs/main.js       Stub, not implemented
+docker/                         Container build for the Go implementation
+```

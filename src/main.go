@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,10 +64,25 @@ var (
 	errNoDestination  = errors.New("no destination resolved")
 )
 
+//go:embed shared/rules.json
+var rulesJSON []byte
+
+// sharedRules は src/shared/rules.json の構造。Cloudflare Worker 実装と
+// 同じファイルを読み込むことで、ルールの定義を一箇所に保つ。
+type sharedRules struct {
+	Trackers []struct {
+		Host  string   `json:"host"`
+		Paths []string `json:"paths"`
+	} `json:"trackers"`
+	TrackingParamPrefixes []string `json:"trackingParamPrefixes"`
+	TrackingParamNames    []string `json:"trackingParamNames"`
+	HostTrackingParams    []struct {
+		Suffix string   `json:"suffix"`
+		Names  []string `json:"names"`
+	} `json:"hostTrackingParams"`
+}
+
 // trackerRule は上流として接続を許可するトラッキングサービスを表す。
-//
-// 「誰でも任意の URL を登録できる」短縮 URL サービス (t.co, bit.ly など) は
-// ここに追加してはならない。追加するとオープンリダイレクタ化する。
 type trackerRule struct {
 	// host はリクエストホスト / 上流ホストの完全一致条件。
 	host string
@@ -74,84 +90,53 @@ type trackerRule struct {
 	paths []*regexp.Regexp
 }
 
-var trackerRules = []trackerRule{
-	{
-		host:  "px.a8.net",
-		paths: []*regexp.Regexp{regexp.MustCompile(`^/svt/`)},
-	},
-	{
-		host: "hb.afl.rakuten.co.jp",
-		paths: []*regexp.Regexp{
-			regexp.MustCompile(`^/ichiba/[\w.\-]+`),
-			regexp.MustCompile(`^/hgc/[\w.\-]+`),
-			regexp.MustCompile(`^/hsc/[\w.\-]+`),
-		},
-	},
-	{
-		host:  "ck.jp.ap.valuecommerce.com",
-		paths: []*regexp.Regexp{regexp.MustCompile(`^/servlet/referral`)},
-	},
-	{
-		host:  "af.moshimo.com",
-		paths: []*regexp.Regexp{regexp.MustCompile(`^/af/c/click`)},
-	},
-	{
-		host:  "t.afi-b.com",
-		paths: []*regexp.Regexp{regexp.MustCompile(`^/`)},
-	},
-	{
-		host:  "click.linksynergy.com",
-		paths: []*regexp.Regexp{regexp.MustCompile(`^/`)},
-	},
-}
-
-// trackingParamPrefixes は前方一致で除去するクエリパラメータ。
-var trackingParamPrefixes = []string{
-	"utm_", "mtm_", "pk_", "piwik_", "matomo_", "hsa_", "vero_", "oly_",
-	"trk_", "_bta_", "__hs", "ito_", "at_custom", "spm_",
-}
-
-// trackingParamNames は完全一致で除去するクエリパラメータ。
-// "ref" / "pid" / "sid" / "cid" のように正規の機能パラメータと衝突しうる名前は
-// ここには入れず、hostTrackingParams 側でホストを限定して扱う。
-var trackingParamNames = map[string]struct{}{
-	"gclid": {}, "gclsrc": {}, "dclid": {}, "gbraid": {}, "wbraid": {},
-	"fbclid": {}, "msclkid": {}, "yclid": {}, "twclid": {}, "ttclid": {},
-	"igshid": {}, "igsh": {}, "li_fat_id": {}, "rdt_cid": {}, "epik": {},
-	"s_kwcid": {}, "ef_id": {}, "mkt_tok": {}, "wickedid": {}, "_openstat": {},
-	"yadcid": {}, "yadid": {}, "_ga": {}, "_gl": {}, "__s": {},
-	"mc_cid": {}, "mc_eid": {}, "ml_subscriber": {}, "ml_subscriber_hash": {},
-	"fb_action_ids": {}, "fb_action_types": {}, "fb_source": {}, "fb_ref": {},
-	"action_object_map": {}, "action_type_map": {}, "action_ref_map": {},
-	"vc_lpp": {}, "a8": {}, "msockid": {},
-}
-
-// hostTrackingParams はホスト (サフィックス一致) ごとに追加で除去する
-// パラメータ。汎用的に消すと壊れる名前をここで限定的に扱う。
-var hostTrackingParams = []struct {
+// hostParamRule はホストを限定して除去するクエリパラメータの定義。
+type hostParamRule struct {
 	suffix string
 	names  []string
-}{
-	{"amazon.co.jp", []string{
-		"tag", "linkCode", "linkId", "creative", "creativeASIN", "ascsubtag",
-		"camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
-		"dib", "dib_tag", "content-id", "_encoding", "th",
-	}},
-	{"amazon.com", []string{
-		"tag", "linkCode", "linkId", "creative", "creativeASIN", "ascsubtag",
-		"camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
-		"dib", "dib_tag", "content-id", "_encoding", "th",
-	}},
-	{"rakuten.co.jp", []string{
-		"scid", "sc2id", "iasid", "rafcid", "l-id", "l2-id", "trflg", "bk",
-	}},
-	{"yahoo.co.jp", []string{
-		"sc_e", "sc_i", "mcr", "ei", "ark", "tpkgd",
-	}},
-	{"youtube.com", []string{"si", "feature", "kw"}},
-	{"youtu.be", []string{"si", "feature"}},
-	{"x.com", []string{"s", "t", "ref_src", "ref_url"}},
-	{"twitter.com", []string{"s", "t", "ref_src", "ref_url"}},
+}
+
+var (
+	// trackerRules は処理対象とするトラッキングサービスの allowlist。
+	trackerRules []trackerRule
+	// trackingParamPrefixes は前方一致で除去するクエリパラメータ。
+	trackingParamPrefixes []string
+	// trackingParamNames は完全一致で除去するクエリパラメータ。
+	trackingParamNames map[string]struct{}
+	// hostTrackingParams はホストごとに追加で除去するクエリパラメータ。
+	hostTrackingParams []hostParamRule
+)
+
+// init は共有ルール定義を読み込む。定義が壊れている場合は起動させない。
+func init() {
+	var parsed sharedRules
+	if err := json.Unmarshal(rulesJSON, &parsed); err != nil {
+		panic(fmt.Sprintf("invalid shared/rules.json: %v", err))
+	}
+
+	trackerRules = make([]trackerRule, 0, len(parsed.Trackers))
+	for _, tracker := range parsed.Trackers {
+		rule := trackerRule{host: strings.ToLower(tracker.Host)}
+		for _, pattern := range tracker.Paths {
+			rule.paths = append(rule.paths, regexp.MustCompile(pattern))
+		}
+		trackerRules = append(trackerRules, rule)
+	}
+
+	trackingParamPrefixes = parsed.TrackingParamPrefixes
+
+	trackingParamNames = make(map[string]struct{}, len(parsed.TrackingParamNames))
+	for _, name := range parsed.TrackingParamNames {
+		trackingParamNames[strings.ToLower(name)] = struct{}{}
+	}
+
+	hostTrackingParams = make([]hostParamRule, 0, len(parsed.HostTrackingParams))
+	for _, entry := range parsed.HostTrackingParams {
+		hostTrackingParams = append(hostTrackingParams, hostParamRule{
+			suffix: strings.ToLower(entry.Suffix),
+			names:  entry.Names,
+		})
+	}
 }
 
 func main() {

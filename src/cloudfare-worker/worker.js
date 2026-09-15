@@ -16,9 +16,11 @@
  * リダイレクトせず解決結果の URL を表示するだけなので、遷移先にこのサービスの
  * URL が Referer として残らない。
  *
- * src/main/main.go と同じポリシーを実装している。ルールを更新する場合は
- * 双方を同時に更新すること。
+ * src/main.go と同じポリシーを実装している。allowlist とトラッキング
+ * パラメータの定義は src/shared/rules.json で共有している。
  */
+
+import rules from "../shared/rules.json" with { type: "json" };
 
 const MAX_REDIRECT_HOPS = 8;
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -31,67 +33,25 @@ const API_ENDPOINT = "/api/resolve";
 const RESOLVE_PARAM = "u";
 
 /**
- * 上流として接続を許可するトラッキングサービス。
- *
- * 「誰でも任意の URL を登録できる」短縮 URL サービス (t.co, bit.ly など) は
- * ここに追加してはならない。追加するとオープンリダイレクタ化する。
- * paths が空配列の場合は当該ホストの全パスを許可する。
+ * 共有ルール定義。Go 実装 (src/main.go) も同じファイルを読み込む。
+ * ルールを変更する場合は src/shared/rules.json だけを編集すればよい。
  */
-const TRACKER_RULES = [
-    { host: "px.a8.net", paths: [/^\/svt\//] },
-    {
-        host: "hb.afl.rakuten.co.jp",
-        paths: [/^\/ichiba\/[\w.\-]+/, /^\/hgc\/[\w.\-]+/, /^\/hsc\/[\w.\-]+/],
-    },
-    { host: "ck.jp.ap.valuecommerce.com", paths: [/^\/servlet\/referral/] },
-    { host: "af.moshimo.com", paths: [/^\/af\/c\/click/] },
-    { host: "t.afi-b.com", paths: [] },
-    { host: "click.linksynergy.com", paths: [] },
-];
+const TRACKER_RULES = rules.trackers.map((tracker) => ({
+    host: tracker.host.toLowerCase(),
+    paths: tracker.paths.map((pattern) => new RegExp(pattern)),
+}));
 
 /** 前方一致で除去するクエリパラメータ。 */
-const TRACKING_PARAM_PREFIXES = [
-    "utm_", "mtm_", "pk_", "piwik_", "matomo_", "hsa_", "vero_", "oly_",
-    "trk_", "_bta_", "__hs", "ito_", "at_custom", "spm_",
-];
+const TRACKING_PARAM_PREFIXES = rules.trackingParamPrefixes;
 
-/**
- * 完全一致で除去するクエリパラメータ。
- * "ref" / "pid" / "sid" / "cid" のように正規の機能パラメータと衝突しうる名前は
- * ここには入れず、HOST_TRACKING_PARAMS 側でホストを限定して扱う。
- */
-const TRACKING_PARAM_NAMES = new Set([
-    "gclid", "gclsrc", "dclid", "gbraid", "wbraid",
-    "fbclid", "msclkid", "yclid", "twclid", "ttclid",
-    "igshid", "igsh", "li_fat_id", "rdt_cid", "epik",
-    "s_kwcid", "ef_id", "mkt_tok", "wickedid", "_openstat",
-    "yadcid", "yadid", "_ga", "_gl", "__s",
-    "mc_cid", "mc_eid", "ml_subscriber", "ml_subscriber_hash",
-    "fb_action_ids", "fb_action_types", "fb_source", "fb_ref",
-    "action_object_map", "action_type_map", "action_ref_map",
-    "vc_lpp", "a8", "msockid",
-]);
+/** 完全一致で除去するクエリパラメータ。 */
+const TRACKING_PARAM_NAMES = new Set(rules.trackingParamNames.map((name) => name.toLowerCase()));
 
-const AMAZON_PARAMS = [
-    "tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag",
-    "camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
-    "dib", "dib_tag", "content-id", "_encoding", "th",
-];
-
-/**
- * ホスト (サフィックス一致) ごとに追加で除去するパラメータ。
- * 汎用的に消すと壊れる名前をここで限定的に扱う。名前は小文字で保持する。
- */
-const HOST_TRACKING_PARAMS = [
-    { suffix: "amazon.co.jp", names: AMAZON_PARAMS },
-    { suffix: "amazon.com", names: AMAZON_PARAMS },
-    { suffix: "rakuten.co.jp", names: ["scid", "sc2id", "iasid", "rafcid", "l-id", "l2-id", "trflg", "bk"] },
-    { suffix: "yahoo.co.jp", names: ["sc_e", "sc_i", "mcr", "ei", "ark", "tpkgd"] },
-    { suffix: "youtube.com", names: ["si", "feature", "kw"] },
-    { suffix: "youtu.be", names: ["si", "feature"] },
-    { suffix: "x.com", names: ["s", "t", "ref_src", "ref_url"] },
-    { suffix: "twitter.com", names: ["s", "t", "ref_src", "ref_url"] },
-];
+/** ホスト (サフィックス一致) ごとに追加で除去するパラメータ。 */
+const HOST_TRACKING_PARAMS = rules.hostTrackingParams.map((entry) => ({
+    suffix: entry.suffix.toLowerCase(),
+    names: entry.names.map((name) => name.toLowerCase()),
+}));
 
 const DEFAULT_USER_MESSAGE = "リダイレクト先を取得できませんでした。時間をおいて再度試してください。";
 

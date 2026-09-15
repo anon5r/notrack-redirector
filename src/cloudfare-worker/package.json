@@ -8,5 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test worker.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.131.2"
   }
 }

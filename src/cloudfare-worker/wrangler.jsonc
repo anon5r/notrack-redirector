@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notrack-redirector",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-15",
+  "observability": {
+    "enabled": true
+  },
+  // 上流の実ホストを指定する。DNS / ルートをこの Worker へ向けている場合、
+  // 未設定だと上流 fetch が自分自身に戻り 508 になる。
+  // 例: "px.a8.net=px-origin.example.net,hb.afl.rakuten.co.jp=rakuten-origin.example.net"
+  "vars": {
+    "UPSTREAM_HOST_MAP": ""
+  }
+  // トラッキングホストを Worker へ向ける場合は routes を設定する。
+  // "routes": [
+  //   { "pattern": "px.a8.net/*", "zone_name": "a8.net" }
+  // ]
+}

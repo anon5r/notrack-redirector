@@ -129,8 +129,11 @@ $ npm --prefix src/cloudfare-worker test
 
 ```shell
 $ cd src/cloudfare-worker
-$ npx wrangler deploy
+$ CLOUDFLARE_ACCOUNT_ID=<account id> npx wrangler deploy
 ```
+
+`CLOUDFLARE_ACCOUNT_ID` is only needed when the authenticated user has more
+than one account; it is kept out of `wrangler.jsonc` on purpose.
 
 Set `UPSTREAM_HOST_MAP` in `wrangler.jsonc` (or as a secret) when tracking
 hostnames are routed to the Worker; see Configuration above. Workers cannot dial

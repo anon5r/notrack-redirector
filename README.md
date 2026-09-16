@@ -19,10 +19,13 @@ Two ways to use it:
 
 1. The URL is checked: it must be an absolute `http(s)` URL that does not point
    at a loopback, private, CGNAT or link-local address.
-2. The service fetches the URL itself and follows the redirect chain (`Location`
-   headers only, up to 8 hops, no cookies, no forwarded headers). A URL that
-   does not redirect is kept as-is, so pasting an ordinary link still strips its
-   tracking parameters.
+2. The service fetches the URL itself and follows the redirect chain, up to 8
+   hops, with no cookies and no forwarded headers. Both `Location` headers and
+   HTML `<meta http-equiv="refresh">` are followed — several mail trackers
+   (Sendinblue/Brevo among them) redirect only through the page body. Redirects
+   driven purely by JavaScript are not followed, since guessing a destination
+   out of a script would be unreliable. A URL that does not redirect is kept
+   as-is, so pasting an ordinary link still strips its tracking parameters.
 3. Tracking parameters (`utm_*`, `gclid`, Amazon `tag`, Rakuten `scid`, ...) are
    removed from the resolved URL.
 4. The cleaned URL is shown on the top page, returned as JSON, or sent as a

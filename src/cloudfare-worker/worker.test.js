@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
     errorCode,
+    metaRefreshTarget,
     parseResolvableURL,
     parseTrackerURL,
     handleRequest,
@@ -113,6 +114,12 @@ function stubFetch(routes) {
         }
         if (route.location) {
             return new Response(null, { status: 302, headers: { Location: route.location } });
+        }
+        if (route.html) {
+            return new Response(route.html, {
+                status: 200,
+                headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
         }
         return new Response(null, { status: route.status || 200 });
     };
@@ -341,4 +348,48 @@ test("自動で開く設定は URL パラメータから有効化できない", 
     // URL で指定できると「開くだけで任意の URL へ飛ぶリンク」を他人に送れてしまう。
     const assignments = [...script.matchAll(/autoOpen\.checked\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
     assert.deepEqual(assignments, ["readAutoOpen()"]);
+});
+
+test("metaRefreshTarget", () => {
+    const cases = [
+        [
+            `<html><body><noscript><meta http-equiv="refresh" content="0.0;https://www.craft.do/download"></noscript></body></html>`,
+            "https://www.craft.do/download",
+        ],
+        [`<meta http-equiv="Refresh" content="5; URL=https://example.com/next">`, "https://example.com/next"],
+        [`<meta content="0;url=/relative" http-equiv='refresh'>`, "/relative"],
+        [`<meta name="description" content="0;url=https://evil.example/">`, ""],
+        [`<script>top.location='https://example.com/js'</script>`, ""],
+        [`<html><body>hello</body></html>`, ""],
+    ];
+    for (const [html, want] of cases) {
+        assert.equal(metaRefreshTarget(html), want, html.slice(0, 60));
+    }
+});
+
+test("resolveDestination は meta refresh も追跡する", async (t) => {
+    const restore = stubFetch({
+        "/mk/cl": {
+            html: `<html><body><noscript>` +
+                `<meta http-equiv="refresh" content="0.0;https://example.com/download?utm_source=mail">` +
+                `</noscript></body></html>`,
+        },
+        "/download": { status: 200 },
+    });
+    t.after(restore);
+
+    const result = await resolveDestination(new URL("https://tracker.example/mk/cl"), new Map());
+    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/download");
+    assert.equal(result.hops.length, 1);
+});
+
+test("resolveDestination は meta refresh の危険な宛先を拒否する", async (t) => {
+    const restore = stubFetch({
+        "/mk/cl": { html: `<meta http-equiv="refresh" content="0;url=http://169.254.169.254/latest/meta-data/">` },
+    });
+    t.after(restore);
+
+    await assert.rejects(() => resolveDestination(new URL("https://tracker.example/mk/cl"), new Map()), {
+        status: 403,
+    });
 });

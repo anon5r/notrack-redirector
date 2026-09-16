@@ -44,7 +44,7 @@ const (
 	maxRedirectHops   = 8
 	upstreamTimeout   = 8 * time.Second
 	dialTimeout       = 3 * time.Second
-	maxDrainBytes     = 64 * 1024
+	maxBodyBytes      = 64 * 1024
 
 	loopGuardHeader = "X-Notrack-Redirector"
 	loopGuardValue  = "1"
@@ -511,12 +511,23 @@ func resolveDestination(client *http.Client, target *url.URL) (*resolveResult, e
 		if err != nil {
 			return nil, err
 		}
-		location := resp.Header.Get("Location")
 		status := resp.StatusCode
-		io.CopyN(io.Discard, resp.Body, maxDrainBytes)
+		location := resp.Header.Get("Location")
+		redirected := status >= 300 && status <= 399 && location != ""
+
+		// HTTP リダイレクトでない場合だけ、HTML による遷移指示を探すために
+		// 本文の先頭を読む。
+		var body []byte
+		if !redirected && isHTMLContentType(resp.Header.Get("Content-Type")) {
+			body, _ = io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+		}
+		io.CopyN(io.Discard, resp.Body, maxBodyBytes)
 		resp.Body.Close()
 
-		if status < 300 || status > 399 || location == "" {
+		if !redirected {
+			location = metaRefreshTarget(body)
+		}
+		if location == "" {
 			// これ以上リダイレクトしない = ここが最終地点。
 			// 一度もリダイレクトしなかった場合も、入力 URL からトラッキング
 			// パラメータを取り除いた結果には意味があるため結果として返す。
@@ -525,7 +536,7 @@ func resolveDestination(client *http.Client, target *url.URL) (*resolveResult, e
 
 		next, err := current.Parse(location)
 		if err != nil {
-			return nil, fmt.Errorf("invalid Location header: %w", err)
+			return nil, fmt.Errorf("invalid redirect target: %w", err)
 		}
 		if err := validateHopURL(next); err != nil {
 			return nil, err
@@ -535,6 +546,61 @@ func resolveDestination(client *http.Client, target *url.URL) (*resolveResult, e
 	}
 
 	return nil, errTooManyHops
+}
+
+var (
+	metaTagPattern  = regexp.MustCompile(`(?is)<meta\s[^>]*>`)
+	metaAttrPattern = regexp.MustCompile(`(?is)([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)`)
+)
+
+// isHTMLContentType は本文を HTML として読むべきかを判定する。
+func isHTMLContentType(value string) bool {
+	return strings.Contains(strings.ToLower(value), "text/html")
+}
+
+// metaRefreshTarget は HTML の meta refresh による遷移先を返す。
+//
+// HTTP リダイレクトではなく <meta http-equiv="refresh"> で遷移させる
+// トラッキングサービスがあるため、それも追跡の対象にする。
+// JavaScript による遷移は誤検出を招くので対象にしない。
+func metaRefreshTarget(body []byte) string {
+	for _, tag := range metaTagPattern.FindAll(body, -1) {
+		var isRefresh bool
+		var content string
+
+		for _, attr := range metaAttrPattern.FindAllSubmatch(tag, -1) {
+			name := strings.ToLower(string(attr[1]))
+			value := strings.Trim(string(attr[2]), `"'`)
+
+			switch name {
+			case "http-equiv":
+				isRefresh = strings.EqualFold(strings.TrimSpace(value), "refresh")
+			case "content":
+				content = value
+			}
+		}
+
+		if isRefresh {
+			if target := parseRefreshContent(content); target != "" {
+				return target
+			}
+		}
+	}
+	return ""
+}
+
+// parseRefreshContent は refresh の content 属性から URL を取り出す。
+// "0;url=https://..." と "0.0;https://..." のどちらの書き方も受け付ける。
+func parseRefreshContent(content string) string {
+	_, target, ok := strings.Cut(content, ";")
+	if !ok {
+		return ""
+	}
+	target = strings.TrimSpace(target)
+	if len(target) >= 4 && strings.EqualFold(target[:4], "url=") {
+		target = strings.TrimSpace(target[4:])
+	}
+	return strings.Trim(target, `"'`)
 }
 
 // validateHopURL はリダイレクト先として許容できる URL かを検証する。

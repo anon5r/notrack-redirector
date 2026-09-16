@@ -26,6 +26,7 @@ import rules from "../shared/rules.json" with { type: "json" };
 
 const MAX_REDIRECT_HOPS = 8;
 const UPSTREAM_TIMEOUT_MS = 8000;
+const MAX_BODY_BYTES = 64 * 1024;
 
 const LOOP_GUARD_HEADER = "X-Notrack-Redirector";
 const LOOP_GUARD_VALUE = "1";
@@ -140,6 +141,70 @@ function targetURL(requestURL) {
     return target;
 }
 
+/** 本文を HTML として読むべきかを判定する。 */
+function isHTMLContentType(value) {
+    return String(value || "").toLowerCase().includes("text/html");
+}
+
+/** 本文の先頭だけを読み取る。遷移先の指示はページ冒頭にあるため十分。 */
+async function readBodyHead(response) {
+    if (!response.body) {
+        return "";
+    }
+    const buffer = await response.arrayBuffer();
+    return new TextDecoder().decode(buffer.slice(0, MAX_BODY_BYTES));
+}
+
+const META_TAG_PATTERN = /<meta\s[^>]*>/gis;
+const META_ATTR_PATTERN = /([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gis;
+
+/**
+ * HTML の meta refresh による遷移先を返す。
+ *
+ * HTTP リダイレクトではなく <meta http-equiv="refresh"> で遷移させる
+ * トラッキングサービスがあるため、それも追跡の対象にする。
+ * JavaScript による遷移は誤検出を招くので対象にしない。
+ */
+function metaRefreshTarget(html) {
+    for (const [tag] of String(html).matchAll(META_TAG_PATTERN)) {
+        let isRefresh = false;
+        let content = "";
+
+        for (const [, name, rawValue] of tag.matchAll(META_ATTR_PATTERN)) {
+            const value = rawValue.replace(/^["']|["']$/g, "");
+            if (name.toLowerCase() === "http-equiv") {
+                isRefresh = value.trim().toLowerCase() === "refresh";
+            } else if (name.toLowerCase() === "content") {
+                content = value;
+            }
+        }
+
+        if (isRefresh) {
+            const target = parseRefreshContent(content);
+            if (target) {
+                return target;
+            }
+        }
+    }
+    return "";
+}
+
+/**
+ * refresh の content 属性から URL を取り出す。
+ * "0;url=https://..." と "0.0;https://..." のどちらの書き方も受け付ける。
+ */
+function parseRefreshContent(content) {
+    const index = content.indexOf(";");
+    if (index < 0) {
+        return "";
+    }
+    let target = content.slice(index + 1).trim();
+    if (target.slice(0, 4).toLowerCase() === "url=") {
+        target = target.slice(4).trim();
+    }
+    return target.replace(/^["']|["']$/g, "");
+}
+
 /** リダイレクト先として許容できる URL かを検証する。 */
 function validateHopURL(url) {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -220,14 +285,19 @@ async function resolveDestination(target, hostMap) {
             throw new RedirectorError(`upstream fetch failed: ${err}`, 502);
         }
 
-        const location = response.headers.get("Location");
         const status = response.status;
-        // ボディは利用しないので破棄する。
-        if (response.body) {
+        let location = response.headers.get("Location");
+        const redirected = status >= 300 && status <= 399 && Boolean(location);
+
+        // HTTP リダイレクトでない場合だけ、HTML による遷移指示を探すために
+        // 本文の先頭を読む。
+        if (!redirected && isHTMLContentType(response.headers.get("Content-Type"))) {
+            location = metaRefreshTarget(await readBodyHead(response));
+        } else if (response.body) {
             await response.body.cancel();
         }
 
-        if (status < 300 || status > 399 || !location) {
+        if (!location) {
             // これ以上リダイレクトしない = ここが最終地点。
             // 一度もリダイレクトしなかった場合も、入力 URL からトラッキング
             // パラメータを取り除いた結果には意味があるため結果として返す。
@@ -238,7 +308,7 @@ async function resolveDestination(target, hostMap) {
         try {
             next = new URL(location, current);
         } catch {
-            throw new RedirectorError("invalid Location header", 502);
+            throw new RedirectorError("invalid redirect target", 502);
         }
         validateHopURL(next);
         hops.push(next);
@@ -512,6 +582,7 @@ export {
     isNonPublicAddress,
     isTrackerHost,
     isTrackerURL,
+    metaRefreshTarget,
     parseResolvableURL,
     parseTrackerURL,
     parseHostMap,

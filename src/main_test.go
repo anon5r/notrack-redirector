@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -472,5 +473,99 @@ func TestTrackerHostRequestStillRedirects(t *testing.T) {
 	}
 	if got := w.Header().Get("Location"); got != "http://example.com/final?id=1" {
 		t.Errorf("Location = %q", got)
+	}
+}
+
+func TestMetaRefreshTarget(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "noscript 内の url= なし表記",
+			body: `<html><body><noscript>` +
+				`<meta http-equiv="refresh" content="0.0;https://www.craft.do/download">` +
+				`</noscript></body></html>`,
+			want: "https://www.craft.do/download",
+		},
+		{
+			name: "url= 付き",
+			body: `<meta http-equiv="Refresh" content="5; URL=https://example.com/next">`,
+			want: "https://example.com/next",
+		},
+		{
+			name: "属性の順序が逆",
+			body: `<meta content="0;url=/relative" http-equiv='refresh'>`,
+			want: "/relative",
+		},
+		{
+			name: "refresh 以外の meta は無視する",
+			body: `<meta name="description" content="0;url=https://evil.example/">`,
+			want: "",
+		},
+		{
+			name: "JavaScript による遷移は追わない",
+			body: `<script>top.location='https://example.com/js'</script>`,
+			want: "",
+		},
+		{
+			name: "meta なし",
+			body: `<html><body>hello</body></html>`,
+			want: "",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := metaRefreshTarget([]byte(c.body)); got != c.want {
+				t.Errorf("metaRefreshTarget = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestResolveDestinationFollowsMetaRefresh(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mk/cl":
+			// HTTP リダイレクトではなく HTML で遷移させるトラッカー。
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			io.WriteString(w, `<html><body><noscript>`+
+				`<meta http-equiv="refresh" content="0.0;http://example.com/download?utm_source=mail">`+
+				`</noscript></body></html>`)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer upstream.Close()
+
+	addr := strings.TrimPrefix(upstream.URL, "http://")
+	client := newTestClient(t, "tracker.example="+addr+",example.com="+addr)
+
+	result, err := resolveDestination(client, mustParse(t, "http://tracker.example/mk/cl"))
+	if err != nil {
+		t.Fatalf("resolveDestination: %v", err)
+	}
+	if got := stripTrackingParams(result.Final).String(); got != "http://example.com/download" {
+		t.Errorf("destination = %q", got)
+	}
+	if len(result.Hops) != 1 {
+		t.Errorf("hops = %v, want 1 entry", result.Hops)
+	}
+}
+
+func TestResolveDestinationRejectsUnsafeMetaRefresh(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<meta http-equiv="refresh" content="0;url=http://169.254.169.254/latest/meta-data/">`)
+	}))
+	defer upstream.Close()
+
+	client := newTestClient(t, "tracker.example="+strings.TrimPrefix(upstream.URL, "http://"))
+
+	_, err := resolveDestination(client, mustParse(t, "http://tracker.example/mk/cl"))
+	if !errors.Is(err, errBlockedAddress) {
+		t.Fatalf("err = %v, want errBlockedAddress", err)
 	}
 }

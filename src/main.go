@@ -19,12 +19,12 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -46,9 +46,15 @@ const (
 	loopGuardHeader = "X-Notrack-Redirector"
 	loopGuardValue  = "1"
 
-	resolveEndpoint = "/-/resolve"
-	apiEndpoint     = "/api/resolve"
-	resolveParam    = "u"
+	resolveEndpoint  = "/-/resolve"
+	apiEndpoint      = "/api/resolve"
+	trackersEndpoint = "/api/trackers"
+	resolveParam     = "u"
+
+	// uiCSP は共有 UI に付与する Content-Security-Policy。
+	// スクリプトとスタイルは同一オリジンの静的ファイルだけを許可する。
+	uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; " +
+		"connect-src 'self'; form-action 'self'; base-uri 'none'"
 
 	envListenAddr      = "LISTEN_ADDR"
 	envUpstreamHostMap = "UPSTREAM_HOST_MAP"
@@ -66,6 +72,11 @@ var (
 
 //go:embed shared/rules.json
 var rulesJSON []byte
+
+// uiFS は Cloudflare Worker 実装と共有する静的 UI。
+//
+//go:embed shared/ui
+var uiFS embed.FS
 
 // sharedRules は src/shared/rules.json の構造。Cloudflare Worker 実装と
 // 同じファイルを読み込むことで、ルールの定義を一箇所に保つ。
@@ -179,14 +190,14 @@ func redirector(client *http.Client, w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.URL.Path {
-	case "/":
-		handleIndex(client, w, r)
 	case apiEndpoint:
 		handleAPI(client, w, r)
+	case trackersEndpoint:
+		handleTrackers(w)
 	case resolveEndpoint:
 		handleRedirect(client, w, r)
 	default:
-		writeError(w, http.StatusNotFound, errors.New("not found"))
+		uiHandler.ServeHTTP(w, r)
 	}
 }
 
@@ -221,51 +232,13 @@ func handleRedirect(client *http.Client, w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusFound)
 }
 
-// pageData はトップページのテンプレートに渡す値。
-type pageData struct {
-	Input       string
-	Destination string
-	Hops        []string
-	Error       string
-	Trackers    []string
-}
-
-// handleIndex は URL 入力フォームと解決結果を表示する。
-// リダイレクトはせず、結果の URL を提示するだけに留める。
-func handleIndex(client *http.Client, w http.ResponseWriter, r *http.Request) {
-	data := pageData{Trackers: trackerHostNames()}
-	status := http.StatusOK
-
-	if raw := strings.TrimSpace(r.URL.Query().Get(resolveParam)); raw != "" {
-		data.Input = raw
-		result, err := lookup(client, raw)
-		if err != nil {
-			data.Error = userMessage(err)
-			status = resolveStatus(err)
-		} else {
-			data.Destination = stripTrackingParams(result.Final).String()
-			data.Hops = hopLabels(result.Hops)
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'")
-	w.WriteHeader(status)
-
-	if err := indexTemplate.Execute(w, data); err != nil {
-		log.Printf("template execution failed: %v", err)
-	}
-}
-
 // apiResponse は /api/resolve の応答。
 type apiResponse struct {
 	Original    string   `json:"original,omitempty"`
 	Destination string   `json:"destination,omitempty"`
 	Hops        []string `json:"hops,omitempty"`
 	Error       string   `json:"error,omitempty"`
+	Code        string   `json:"code,omitempty"`
 }
 
 // handleAPI は解決結果を JSON で返す。
@@ -277,9 +250,11 @@ func handleAPI(client *http.Client, w http.ResponseWriter, r *http.Request) {
 	if raw == "" {
 		status = http.StatusBadRequest
 		body.Error = fmt.Sprintf("missing %q parameter", resolveParam)
+		body.Code = codeInvalidURL
 	} else if result, err := lookup(client, raw); err != nil {
 		status = resolveStatus(err)
 		body.Error = err.Error()
+		body.Code = errorCode(err)
 	} else {
 		body.Destination = stripTrackingParams(result.Final).String()
 		body.Hops = hopLabels(result.Hops)
@@ -322,21 +297,31 @@ func parseTrackerURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// userMessage は利用者向けの日本語メッセージへ変換する。
-func userMessage(err error) string {
+// エラーコード。画面に出す文言は src/shared/ui/app.js 側で管理する。
+const (
+	codeUnsupportedURL     = "unsupported_url"
+	codeInvalidURL         = "invalid_url"
+	codeBlockedDestination = "blocked_destination"
+	codeTooManyHops        = "too_many_hops"
+	codeNoDestination      = "no_destination"
+	codeUpstreamError      = "upstream_error"
+)
+
+// errorCode は解決時のエラーを API のエラーコードへ変換する。
+func errorCode(err error) string {
 	switch {
 	case errors.Is(err, errNotTracker):
-		return "対応していないサービスの URL です。下の対応サービス一覧を確認してください。"
+		return codeUnsupportedURL
 	case errors.Is(err, errInvalidURL):
-		return "URL の形式が正しくありません。"
+		return codeInvalidURL
 	case errors.Is(err, errBlockedAddress):
-		return "安全でないリダイレクト先が含まれていたため中断しました。"
+		return codeBlockedDestination
 	case errors.Is(err, errTooManyHops), errors.Is(err, errLoopDetected):
-		return "リダイレクトが多すぎるため中断しました。"
+		return codeTooManyHops
 	case errors.Is(err, errNoDestination):
-		return "この URL はリダイレクトを返しませんでした。"
+		return codeNoDestination
 	default:
-		return "リダイレクト先を取得できませんでした。時間をおいて再度試してください。"
+		return codeUpstreamError
 	}
 }
 
@@ -357,6 +342,35 @@ func hopLabels(hops []*url.URL) []string {
 		labels = append(labels, (&url.URL{Scheme: hop.Scheme, Host: hop.Host, Path: hop.Path}).String())
 	}
 	return labels
+}
+
+// handleTrackers は対応サービスの一覧を JSON で返す。画面の一覧表示に使う。
+func handleTrackers(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(map[string][]string{"trackers": trackerHostNames()}); err != nil {
+		log.Printf("json encoding failed: %v", err)
+	}
+}
+
+// uiHandler は共有 UI を配信する。
+var uiHandler = newUIHandler()
+
+// newUIHandler は src/shared/ui の静的ファイルを配信するハンドラを返す。
+// Cloudflare Worker 実装も同じファイルを配信する。
+func newUIHandler() http.Handler {
+	sub, err := fs.Sub(uiFS, "shared/ui")
+	if err != nil {
+		panic(fmt.Sprintf("invalid embedded ui: %v", err))
+	}
+	fileServer := http.FileServer(http.FS(sub))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", uiCSP)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // trackerHostNames は対応サービスのホスト名一覧を返す。
@@ -680,88 +694,3 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	w.WriteHeader(status)
 	fmt.Fprintf(w, "%d %s\n\n%v\n", status, http.StatusText(status), err)
 }
-
-// indexTemplate はトップページの HTML。
-// href は html/template の URL サニタイズを経由するため、http(s) 以外のスキームは
-// 出力されない。すべてのリンクに rel="noreferrer" を付け、遷移先へこのページの
-// URL が Referer として渡らないようにしている。
-var indexTemplate = template.Must(template.New("index").Parse(`<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>notrack-redirector</title>
-<style>
-:root { color-scheme: light dark; }
-body { margin: 0 auto; padding: 2rem 1rem; max-width: 46rem; line-height: 1.7;
-  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-h1 { font-size: 1.4rem; }
-h2 { font-size: 1.1rem; margin-top: 2rem; }
-h3 { font-size: 1rem; }
-form { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1.5rem 0; }
-input[type=url] { flex: 1 1 24rem; padding: .6rem .7rem; font: inherit;
-  border: 1px solid currentColor; border-radius: .3rem; background: transparent; color: inherit; }
-button, .action { padding: .6rem 1rem; font: inherit; cursor: pointer; text-decoration: none;
-  border: 1px solid currentColor; border-radius: .3rem; background: transparent; color: inherit;
-  display: inline-block; }
-code { word-break: break-all; font-size: .95em; }
-.result { border: 1px solid currentColor; border-radius: .4rem; padding: 1rem; }
-.destination { padding: .7rem; border-radius: .3rem; background: rgba(127,127,127,.15); }
-.actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
-.note { font-size: .85rem; opacity: .75; }
-.error { padding: .8rem 1rem; border-radius: .4rem; border: 1px solid #c0392b; color: #c0392b; }
-ol, ul { padding-left: 1.4rem; }
-</style>
-</head>
-<body>
-<h1>notrack-redirector</h1>
-<p>アフィリエイト / トラッキング URL を入力すると、サーバー側でリダイレクト先を解決し、
-トラッキングパラメータを除いた URL を表示します。このページ自体はリダイレクトしません。</p>
-
-<form method="get" action="/">
-<input type="url" name="u" value="{{.Input}}" required autofocus
-  placeholder="https://px.a8.net/svt/ejp?a8mat=...">
-<button type="submit">解決する</button>
-</form>
-
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-
-{{if .Destination}}
-<section class="result">
-<h2>リダイレクト先</h2>
-<p class="destination"><code>{{.Destination}}</code></p>
-<p class="actions">
-<button type="button" id="copy" data-url="{{.Destination}}">URL をコピー</button>
-<a class="action" href="{{.Destination}}" target="_blank" rel="noreferrer noopener">新しいタブで開く</a>
-<a class="action" href="{{.Destination}}" rel="noreferrer">このタブで開く</a>
-</p>
-<p class="note">どちらのリンクにも <code>rel="noreferrer"</code> を付けているため、
-遷移先にこのページの URL は送られません。「新しいタブで開く」は <code>noopener</code> も付与します。</p>
-{{if .Hops}}
-<h3>経路</h3>
-<ol>{{range .Hops}}<li><code>{{.}}</code></li>{{end}}</ol>
-{{end}}
-</section>
-{{end}}
-
-<h2>対応サービス</h2>
-<ul>{{range .Trackers}}<li><code>{{.}}</code></li>{{end}}</ul>
-<p class="note">JSON で取得する場合は <code>/api/resolve?u=&lt;tracking url&gt;</code> を使用してください。</p>
-
-<script>
-const copyButton = document.getElementById("copy");
-if (copyButton) {
-  copyButton.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(copyButton.dataset.url);
-      copyButton.textContent = "コピーしました";
-    } catch {
-      copyButton.textContent = "コピーできませんでした";
-    }
-  });
-}
-</script>
-</body>
-</html>
-`))

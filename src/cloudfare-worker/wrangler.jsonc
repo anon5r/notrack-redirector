@@ -6,6 +6,14 @@
   "observability": {
     "enabled": true
   },
+  // 共有 UI (Go 実装も同じファイルを配信する) を静的アセットとして配信する。
+  // Referrer-Policy と CSP を Worker 側で付与するため、全リクエストを
+  // Worker に通してから env.ASSETS へ委譲する。
+  "assets": {
+    "directory": "../shared/ui",
+    "binding": "ASSETS",
+    "run_worker_first": ["/*"]
+  },
   // 上流の実ホストを指定する。DNS / ルートをこの Worker へ向けている場合、
   // 未設定だと上流 fetch が自分自身に戻り 508 になる。
   // 例: "px.a8.net=px-origin.example.net,hb.afl.rakuten.co.jp=rakuten-origin.example.net"

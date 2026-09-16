@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>notrack-redirector</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<h1>notrack-redirector</h1>
+<p>アフィリエイト / トラッキング URL を入力すると、サーバー側でリダイレクト先を解決し、
+トラッキングパラメータを除いた URL を表示します。このページ自体はリダイレクトしません。</p>
+
+<form method="get" action="/">
+<input type="url" name="u" id="input" required autofocus
+  placeholder="https://px.a8.net/svt/ejp?a8mat=...">
+<button type="submit">解決する</button>
+</form>
+
+<p id="status" hidden>解決しています…</p>
+<p id="error" class="error" hidden></p>
+
+<section id="result" hidden>
+<h2>リダイレクト先</h2>
+<p class="destination"><code id="destination"></code></p>
+<p class="actions">
+<button type="button" id="copy">URL をコピー</button>
+<a class="action" id="open-blank" target="_blank" rel="noreferrer noopener">新しいタブで開く</a>
+<a class="action" id="open-self" rel="noreferrer">このタブで開く</a>
+</p>
+<p class="note">どちらのリンクにも <code>rel="noreferrer"</code> を付けているため、
+遷移先にこのページの URL は送られません。「新しいタブで開く」は <code>noopener</code> も付与します。</p>
+<div id="hops-block" hidden>
+<h3>経路</h3>
+<ol id="hops"></ol>
+</div>
+</section>
+
+<h2>対応サービス</h2>
+<ul id="trackers"><li>読み込み中…</li></ul>
+<p class="note">JSON で取得する場合は <code>/api/resolve?u=&lt;tracking url&gt;</code> を使用してください。</p>
+
+<noscript><p class="error">このページは結果の取得に JavaScript を使用します。
+JavaScript を有効にするか、<code>/api/resolve</code> を直接呼び出してください。</p></noscript>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

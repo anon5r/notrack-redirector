@@ -320,56 +320,62 @@ func doRequest(t *testing.T, client *http.Client, target string) *httptest.Respo
 	return w
 }
 
-func TestHandleIndexShowsForm(t *testing.T) {
+func TestServesStaticUI(t *testing.T) {
 	_, client := newStubUpstream(t)
 
-	w := doRequest(t, client, "/")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	body := w.Body.String()
-	for _, want := range []string{`name="u"`, "notrack-redirector", "px.a8.net"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body does not contain %q", want)
+	for _, path := range []string{"/", "/style.css", "/app.js"} {
+		w := doRequest(t, client, path)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, w.Code)
+			continue
+		}
+		if got := w.Header().Get("Content-Security-Policy"); got != uiCSP {
+			t.Errorf("GET %s: CSP = %q", path, got)
+		}
+		if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
+			t.Errorf("GET %s: Referrer-Policy = %q, want no-referrer", path, got)
 		}
 	}
-	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
-		t.Errorf("Referrer-Policy = %q, want no-referrer", got)
+
+	index := doRequest(t, client, "/").Body.String()
+	for _, want := range []string{`name="u"`, "notrack-redirector", "/app.js"} {
+		if !strings.Contains(index, want) {
+			t.Errorf("index.html does not contain %q", want)
+		}
+	}
+
+	// 解決は API 側で行うため、トップページはリダイレクトしない。
+	withParam := doRequest(t, client, "/?u=http%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc")
+	if loc := withParam.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty (must not redirect)", loc)
+	}
+	if withParam.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", withParam.Code)
 	}
 }
 
-func TestHandleIndexShowsDestinationWithoutRedirecting(t *testing.T) {
+func TestUnknownPathReturns404(t *testing.T) {
 	_, client := newStubUpstream(t)
 
-	w := doRequest(t, client, "/?u=http%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc")
+	if w := doRequest(t, client, "/does-not-exist"); w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestHandleTrackers(t *testing.T) {
+	_, client := newStubUpstream(t)
+
+	w := doRequest(t, client, trackersEndpoint)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "" {
-		t.Errorf("Location = %q, want empty (must not redirect)", loc)
-	}
 
-	body := w.Body.String()
-	if !strings.Contains(body, "http://example.com/final?id=1") {
-		t.Errorf("destination is missing from body")
+	var got map[string][]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json: %v", err)
 	}
-	if strings.Contains(body, "utm_source") {
-		t.Errorf("tracking parameter survived into the page")
-	}
-	if !strings.Contains(body, `rel="noreferrer noopener"`) {
-		t.Errorf(`new tab link must carry rel="noreferrer noopener"`)
-	}
-}
-
-func TestHandleIndexRejectsUnsupportedURL(t *testing.T) {
-	_, client := newStubUpstream(t)
-
-	w := doRequest(t, client, "/?u=https%3A%2F%2Fphishing.example%2F")
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "対応していないサービス") {
-		t.Errorf("error message is missing from body")
+	if len(got["trackers"]) != len(trackerRules) {
+		t.Errorf("trackers = %v, want %d entries", got["trackers"], len(trackerRules))
 	}
 }
 
@@ -396,6 +402,14 @@ func TestHandleAPI(t *testing.T) {
 	if bad.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", bad.Code)
 	}
+
+	var badBody apiResponse
+	if err := json.Unmarshal(bad.Body.Bytes(), &badBody); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if badBody.Code != codeUnsupportedURL {
+		t.Errorf("code = %q, want %q", badBody.Code, codeUnsupportedURL)
+	}
 }
 
 func TestTrackerHostRequestStillRedirects(t *testing.T) {
@@ -411,18 +425,5 @@ func TestTrackerHostRequestStillRedirects(t *testing.T) {
 	}
 	if got := w.Header().Get("Location"); got != "http://example.com/final?id=1" {
 		t.Errorf("Location = %q", got)
-	}
-}
-
-func TestHandleIndexEscapesInput(t *testing.T) {
-	_, client := newStubUpstream(t)
-
-	w := doRequest(t, client, "/?u=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E")
-	body := w.Body.String()
-	if strings.Contains(body, "<script>alert(1)</script>") {
-		t.Errorf("input was not escaped")
-	}
-	if !strings.Contains(body, "&lt;script&gt;") {
-		t.Errorf("escaped input is missing from body")
 	}
 }

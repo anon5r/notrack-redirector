@@ -30,7 +30,16 @@ const LOOP_GUARD_VALUE = "1";
 
 const RESOLVE_ENDPOINT = "/-/resolve";
 const API_ENDPOINT = "/api/resolve";
+const TRACKERS_ENDPOINT = "/api/trackers";
 const RESOLVE_PARAM = "u";
+
+/**
+ * 共有 UI に付与する Content-Security-Policy。
+ * スクリプトとスタイルは同一オリジンの静的ファイルだけを許可する。
+ */
+const UI_CSP =
+    "default-src 'none'; script-src 'self'; style-src 'self'; " +
+    "connect-src 'self'; form-action 'self'; base-uri 'none'";
 
 /**
  * 共有ルール定義。Go 実装 (src/main.go) も同じファイルを読み込む。
@@ -53,26 +62,26 @@ const HOST_TRACKING_PARAMS = rules.hostTrackingParams.map((entry) => ({
     names: entry.names.map((name) => name.toLowerCase()),
 }));
 
-const DEFAULT_USER_MESSAGE = "リダイレクト先を取得できませんでした。時間をおいて再度試してください。";
+/** エラーコード。画面に出す文言は src/shared/ui/app.js 側で管理する。 */
+const CODE_UNSUPPORTED_URL = "unsupported_url";
+const CODE_INVALID_URL = "invalid_url";
+const CODE_BLOCKED_DESTINATION = "blocked_destination";
+const CODE_TOO_MANY_HOPS = "too_many_hops";
+const CODE_NO_DESTINATION = "no_destination";
+const CODE_UPSTREAM_ERROR = "upstream_error";
 
 class RedirectorError extends Error {
     /**
      * @param {string} message ログ / API 向けの英語メッセージ
      * @param {number} status HTTP ステータス
-     * @param {string} [userMessage] 画面に表示する日本語メッセージ
+     * @param {string} [code] API のエラーコード
      */
-    constructor(message, status, userMessage) {
+    constructor(message, status, code) {
         super(message);
         this.status = status;
-        this.userMessage = userMessage || DEFAULT_USER_MESSAGE;
+        this.code = code || CODE_UPSTREAM_ERROR;
     }
 }
-
-const MESSAGE_UNSUPPORTED = "対応していないサービスの URL です。下の対応サービス一覧を確認してください。";
-const MESSAGE_INVALID_URL = "URL の形式が正しくありません。";
-const MESSAGE_BLOCKED = "安全でないリダイレクト先が含まれていたため中断しました。";
-const MESSAGE_TOO_MANY_HOPS = "リダイレクトが多すぎるため中断しました。";
-const MESSAGE_NO_DESTINATION = "この URL はリダイレクトを返しませんでした。";
 
 /** URL が allowlist 済みのトラッキングサービスかを判定する。 */
 function isTrackerURL(url) {
@@ -113,10 +122,10 @@ function targetURL(requestURL) {
         try {
             parsed = new URL(raw);
         } catch {
-            throw new RedirectorError(`invalid "${RESOLVE_PARAM}" parameter`, 400, MESSAGE_INVALID_URL);
+            throw new RedirectorError(`invalid "${RESOLVE_PARAM}" parameter`, 400, CODE_INVALID_URL);
         }
         if (!isTrackerURL(parsed)) {
-            throw new RedirectorError("not a supported tracking url", 404, MESSAGE_UNSUPPORTED);
+            throw new RedirectorError("not a supported tracking url", 404, CODE_UNSUPPORTED_URL);
         }
         return parsed;
     }
@@ -124,7 +133,7 @@ function targetURL(requestURL) {
     const target = new URL(requestURL.toString());
     target.protocol = "https:";
     if (!isTrackerURL(target)) {
-        throw new RedirectorError("not a supported tracking url", 404, MESSAGE_UNSUPPORTED);
+        throw new RedirectorError("not a supported tracking url", 404, CODE_UNSUPPORTED_URL);
     }
     return target;
 }
@@ -132,17 +141,17 @@ function targetURL(requestURL) {
 /** リダイレクト先として許容できる URL かを検証する。 */
 function validateHopURL(url) {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-        throw new RedirectorError(`blocked upstream scheme "${url.protocol}"`, 403, MESSAGE_BLOCKED);
+        throw new RedirectorError(`blocked upstream scheme "${url.protocol}"`, 403, CODE_BLOCKED_DESTINATION);
     }
     const host = url.hostname.toLowerCase();
     if (!host) {
-        throw new RedirectorError("blocked upstream address: empty host", 403, MESSAGE_BLOCKED);
+        throw new RedirectorError("blocked upstream address: empty host", 403, CODE_BLOCKED_DESTINATION);
     }
     if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
-        throw new RedirectorError(`blocked local host "${host}"`, 403, MESSAGE_BLOCKED);
+        throw new RedirectorError(`blocked local host "${host}"`, 403, CODE_BLOCKED_DESTINATION);
     }
     if (isNonPublicAddress(host)) {
-        throw new RedirectorError(`blocked non-public address "${host}"`, 403, MESSAGE_BLOCKED);
+        throw new RedirectorError(`blocked non-public address "${host}"`, 403, CODE_BLOCKED_DESTINATION);
     }
 }
 
@@ -219,7 +228,7 @@ async function resolveDestination(target, hostMap) {
         if (status < 300 || status > 399 || !location) {
             // これ以上リダイレクトしない = ここが最終地点。
             if (hop === 0) {
-                throw new RedirectorError("no destination resolved", 502, MESSAGE_NO_DESTINATION);
+                throw new RedirectorError("no destination resolved", 502, CODE_NO_DESTINATION);
             }
             return { final: current, hops };
         }
@@ -235,7 +244,7 @@ async function resolveDestination(target, hostMap) {
         current = next;
     }
 
-    throw new RedirectorError("too many redirect hops", 508, MESSAGE_TOO_MANY_HOPS);
+    throw new RedirectorError("too many redirect hops", 508, CODE_TOO_MANY_HOPS);
 }
 
 /** URL からトラッキング用パラメータを除去する。 */
@@ -320,9 +329,9 @@ function resolveStatus(err) {
     return err instanceof RedirectorError ? err.status : 502;
 }
 
-/** 利用者向けの日本語メッセージへ変換する。 */
-function userMessage(err) {
-    return err instanceof RedirectorError ? err.userMessage : DEFAULT_USER_MESSAGE;
+/** 解決時のエラーを API のエラーコードへ変換する。 */
+function errorCode(err) {
+    return err instanceof RedirectorError ? err.code : CODE_UPSTREAM_ERROR;
 }
 
 /**
@@ -334,10 +343,10 @@ function parseTrackerURL(raw) {
     try {
         parsed = new URL(raw);
     } catch {
-        throw new RedirectorError("invalid url", 400, MESSAGE_INVALID_URL);
+        throw new RedirectorError("invalid url", 400, CODE_INVALID_URL);
     }
     if (!isTrackerURL(parsed)) {
-        throw new RedirectorError("not a supported tracking url", 400, MESSAGE_UNSUPPORTED);
+        throw new RedirectorError("not a supported tracking url", 400, CODE_UNSUPPORTED_URL);
     }
     return parsed;
 }
@@ -349,145 +358,36 @@ async function lookup(raw, hostMap) {
     return resolveDestination(target, hostMap);
 }
 
-function escapeHTML(value) {
-    return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#39;");
-}
-
 /**
- * トップページの HTML を組み立てる。
- * href に入るのは validateHopURL を通過した http(s) URL だけであり、
- * 利用者の入力値は value 属性としてエスケープしたうえで埋め込む。
- * すべてのリンクに rel="noreferrer" を付け、遷移先へこのページの URL が
- * Referer として渡らないようにしている。
+ * 共有 UI (src/shared/ui) を配信する。Go 実装も同じファイルを配信する。
+ * ヘッダはここで付与するため、_headers に依存しない。
  */
-function renderIndex({ input = "", destination = "", hops = [], error = "" }) {
-    const trackers = TRACKER_RULES.map((rule) => `<li><code>${escapeHTML(rule.host)}</code></li>`).join("");
-    const errorBlock = error ? `<p class="error">${escapeHTML(error)}</p>` : "";
-    const hopBlock = hops.length
-        ? `<h3>経路</h3><ol>${hops.map((hop) => `<li><code>${escapeHTML(hop)}</code></li>`).join("")}</ol>`
-        : "";
-    const resultBlock = destination
-        ? `<section class="result">
-<h2>リダイレクト先</h2>
-<p class="destination"><code>${escapeHTML(destination)}</code></p>
-<p class="actions">
-<button type="button" id="copy" data-url="${escapeHTML(destination)}">URL をコピー</button>
-<a class="action" href="${escapeHTML(destination)}" target="_blank" rel="noreferrer noopener">新しいタブで開く</a>
-<a class="action" href="${escapeHTML(destination)}" rel="noreferrer">このタブで開く</a>
-</p>
-<p class="note">どちらのリンクにも <code>rel="noreferrer"</code> を付けているため、
-遷移先にこのページの URL は送られません。「新しいタブで開く」は <code>noopener</code> も付与します。</p>
-${hopBlock}
-</section>`
-        : "";
-
-    return `<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>notrack-redirector</title>
-<style>
-:root { color-scheme: light dark; }
-body { margin: 0 auto; padding: 2rem 1rem; max-width: 46rem; line-height: 1.7;
-  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-h1 { font-size: 1.4rem; }
-h2 { font-size: 1.1rem; margin-top: 2rem; }
-h3 { font-size: 1rem; }
-form { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1.5rem 0; }
-input[type=url] { flex: 1 1 24rem; padding: .6rem .7rem; font: inherit;
-  border: 1px solid currentColor; border-radius: .3rem; background: transparent; color: inherit; }
-button, .action { padding: .6rem 1rem; font: inherit; cursor: pointer; text-decoration: none;
-  border: 1px solid currentColor; border-radius: .3rem; background: transparent; color: inherit;
-  display: inline-block; }
-code { word-break: break-all; font-size: .95em; }
-.result { border: 1px solid currentColor; border-radius: .4rem; padding: 1rem; }
-.destination { padding: .7rem; border-radius: .3rem; background: rgba(127,127,127,.15); }
-.actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
-.note { font-size: .85rem; opacity: .75; }
-.error { padding: .8rem 1rem; border-radius: .4rem; border: 1px solid #c0392b; color: #c0392b; }
-ol, ul { padding-left: 1.4rem; }
-</style>
-</head>
-<body>
-<h1>notrack-redirector</h1>
-<p>アフィリエイト / トラッキング URL を入力すると、サーバー側でリダイレクト先を解決し、
-トラッキングパラメータを除いた URL を表示します。このページ自体はリダイレクトしません。</p>
-
-<form method="get" action="/">
-<input type="url" name="u" value="${escapeHTML(input)}" required autofocus
-  placeholder="https://px.a8.net/svt/ejp?a8mat=...">
-<button type="submit">解決する</button>
-</form>
-
-${errorBlock}
-${resultBlock}
-
-<h2>対応サービス</h2>
-<ul>${trackers}</ul>
-<p class="note">JSON で取得する場合は <code>${API_ENDPOINT}?u=&lt;tracking url&gt;</code> を使用してください。</p>
-
-<script>
-const copyButton = document.getElementById("copy");
-if (copyButton) {
-  copyButton.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(copyButton.dataset.url);
-      copyButton.textContent = "コピーしました";
-    } catch {
-      copyButton.textContent = "コピーできませんでした";
+async function serveAsset(request, env) {
+    if (!env || !env.ASSETS) {
+        return textResponse("404 not found\n", 404);
     }
-  });
-}
-</script>
-</body>
-</html>
-`;
+
+    const response = await env.ASSETS.fetch(request);
+    if (response.status === 404) {
+        return textResponse("404 not found\n", 404);
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set("Referrer-Policy", "no-referrer");
+    headers.set("Content-Security-Policy", UI_CSP);
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(response.body, { status: response.status, headers });
 }
 
-function htmlResponse(body, status) {
-    return new Response(body, {
-        status,
+/** 対応サービスの一覧を JSON で返す。画面の一覧表示に使う。 */
+function handleTrackers() {
+    return new Response(JSON.stringify({ trackers: TRACKER_RULES.map((rule) => rule.host) }) + "\n", {
+        status: 200,
         headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Referrer-Policy": "no-referrer",
+            "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
-            "Content-Security-Policy":
-                "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'",
         },
     });
-}
-
-/**
- * URL 入力フォームと解決結果を表示する。
- * リダイレクトはせず、結果の URL を提示するだけに留める。
- */
-async function handleIndex(url, hostMap) {
-    const raw = (url.searchParams.get(RESOLVE_PARAM) || "").trim();
-    if (!raw) {
-        return htmlResponse(renderIndex({}), 200);
-    }
-
-    try {
-        const result = await lookup(raw, hostMap);
-        return htmlResponse(
-            renderIndex({
-                input: raw,
-                destination: stripTrackingParams(result.final).toString(),
-                hops: hopLabels(result.hops),
-            }),
-            200,
-        );
-    } catch (err) {
-        console.log(`resolve failed for ${raw}: ${err.message}`);
-        return htmlResponse(renderIndex({ input: raw, error: userMessage(err) }), resolveStatus(err));
-    }
 }
 
 /** 解決結果を JSON で返す。 */
@@ -503,7 +403,7 @@ async function handleAPI(url, hostMap) {
         });
 
     if (!raw) {
-        return respond({ error: `missing "${RESOLVE_PARAM}" parameter` }, 400);
+        return respond({ error: `missing "${RESOLVE_PARAM}" parameter`, code: CODE_INVALID_URL }, 400);
     }
 
     try {
@@ -518,7 +418,7 @@ async function handleAPI(url, hostMap) {
         );
     } catch (err) {
         console.log(`resolve failed for ${raw}: ${err.message}`);
-        return respond({ original: raw, error: err.message }, resolveStatus(err));
+        return respond({ original: raw, error: err.message, code: errorCode(err) }, resolveStatus(err));
     }
 }
 
@@ -576,14 +476,14 @@ async function handleRequest(request, env) {
     }
 
     switch (url.pathname) {
-        case "/":
-            return handleIndex(url, hostMap);
         case API_ENDPOINT:
             return handleAPI(url, hostMap);
+        case TRACKERS_ENDPOINT:
+            return handleTrackers();
         case RESOLVE_ENDPOINT:
             return handleRedirect(url, hostMap);
         default:
-            return textResponse("404 not found\n", 404);
+            return serveAsset(request, env);
     }
 }
 
@@ -596,6 +496,7 @@ export default {
 // テスト用。Workers ランタイムは default export のみを使用する。
 export {
     RedirectorError,
+    errorCode,
     handleRequest,
     hopLabels,
     isNonPublicAddress,

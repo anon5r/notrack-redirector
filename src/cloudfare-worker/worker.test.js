@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+    errorCode,
     handleRequest,
     hopLabels,
     isNonPublicAddress,
@@ -137,8 +139,10 @@ test("resolveDestination は内部宛先へのホップを拒否する", async (
     const restore = stubFetch({ "/svt/ejp": { location: "http://169.254.169.254/latest/meta-data/" } });
     t.after(restore);
 
-    await assert.rejects(() => resolveDestination(new URL("https://px.a8.net/svt/ejp"), new Map()), {
-        status: 403,
+    await assert.rejects(() => resolveDestination(new URL("https://px.a8.net/svt/ejp"), new Map()), (err) => {
+        assert.equal(err.status, 403);
+        assert.equal(errorCode(err), "blocked_destination");
+        return true;
     });
 });
 
@@ -171,50 +175,64 @@ function stubUpstream() {
     });
 }
 
+/** 実際の共有 UI を配信する ASSETS バインディングのスタブ。 */
+const env = {
+    ASSETS: {
+        async fetch(request) {
+            const path = new URL(request.url).pathname;
+            const name = path === "/" ? "index.html" : path.replace(/^\//, "");
+            try {
+                const body = await readFile(new URL(`../shared/ui/${name}`, import.meta.url), "utf8");
+                return new Response(body, { status: 200 });
+            } catch {
+                return new Response(null, { status: 404 });
+            }
+        },
+    },
+};
+
 function get(target, headers = {}) {
-    return handleRequest(new Request(target, { headers }), {});
+    return handleRequest(new Request(target, { headers }), env);
 }
 
-test("トップページはフォームを返す", async (t) => {
+test("共有 UI を配信する", async (t) => {
     t.after(stubUpstream());
 
-    const response = await get("https://redirector.example/");
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
+    for (const path of ["/", "/style.css", "/app.js"]) {
+        const response = await get(`https://redirector.example${path}`);
+        assert.equal(response.status, 200, path);
+        assert.equal(response.headers.get("Referrer-Policy"), "no-referrer", path);
+        assert.match(response.headers.get("Content-Security-Policy"), /script-src 'self'/, path);
+    }
 
-    const body = await response.text();
-    assert.match(body, /name="u"/);
-    assert.match(body, /px\.a8\.net/);
+    const index = await (await get("https://redirector.example/")).text();
+    assert.match(index, /name="u"/);
+    assert.match(index, /\/app\.js/);
 });
 
-test("トップページはリダイレクトせず解決結果を表示する", async (t) => {
+test("トップページはリダイレクトしない", async (t) => {
     t.after(stubUpstream());
 
     const response = await get("https://redirector.example/?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Location"), null);
-
-    const body = await response.text();
-    assert.match(body, /https:\/\/example\.com\/final\?id=1/);
-    assert.doesNotMatch(body, /utm_source/);
-    assert.match(body, /rel="noreferrer noopener"/);
 });
 
-test("トップページは対応外の URL を拒否する", async (t) => {
+test("未知のパスは 404 を返す", async (t) => {
     t.after(stubUpstream());
 
-    const response = await get("https://redirector.example/?u=https%3A%2F%2Fphishing.example%2F");
-    assert.equal(response.status, 400);
-    assert.match(await response.text(), /対応していないサービス/);
+    const response = await get("https://redirector.example/does-not-exist");
+    assert.equal(response.status, 404);
 });
 
-test("トップページは入力値をエスケープする", async (t) => {
+test("/api/trackers は対応サービス一覧を返す", async (t) => {
     t.after(stubUpstream());
 
-    const response = await get("https://redirector.example/?u=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E");
-    const body = await response.text();
-    assert.doesNotMatch(body, /<script>alert\(1\)<\/script>/);
-    assert.match(body, /&quot;&gt;&lt;script&gt;/);
+    const response = await get("https://redirector.example/api/trackers");
+    assert.equal(response.status, 200);
+
+    const body = await response.json();
+    assert.ok(body.trackers.includes("px.a8.net"));
 });
 
 test("/api/resolve は JSON を返す", async (t) => {
@@ -229,6 +247,7 @@ test("/api/resolve は JSON を返す", async (t) => {
 
     const bad = await get("https://redirector.example/api/resolve?u=https%3A%2F%2Fphishing.example%2F");
     assert.equal(bad.status, 400);
+    assert.equal((await bad.json()).code, "unsupported_url");
 });
 
 test("トラッキングホスト宛のリクエストは従来どおり 302 を返す", async (t) => {

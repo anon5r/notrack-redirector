@@ -48,8 +48,9 @@ carry no destination URL in their parameters at all.
 
 | Path | Description |
 | ---- | ----------- |
-| `/` | URL input form. With `?u=<tracking url>` it shows the resolved destination **without redirecting**. |
-| `/api/resolve?u=<tracking url>` | Same resolution as JSON: `{"original", "destination", "hops"}`. |
+| `/` | URL input form (a static page). With `?u=<tracking url>` the page resolves it through the API and shows the destination **without redirecting**. |
+| `/api/resolve?u=<tracking url>` | Resolution as JSON: `{"original", "destination", "hops"}`, or `{"error", "code"}` on failure. |
+| `/api/trackers` | The supported hosts, used to render the list on the page. |
 | `/-/resolve?u=<tracking url>` | Returns a `302` to the cleaned destination. |
 | `/<tracking path>?<query>` | Returns a `302`. Used when the tracking hostname is pointed at this service by DNS or a Worker route. |
 
@@ -96,8 +97,27 @@ read: the Go build embeds it with `go:embed`, the Worker imports it at bundle
 time. Edit that one file to change a rule.
 
 Path patterns in it are regular expressions, so they must be valid in **both**
-Go's `regexp` and JavaScript's `RegExp`. The page markup is still written twice,
-once per implementation.
+Go's `regexp` and JavaScript's `RegExp`.
+
+
+# Shared UI
+
+The page is a static site in `src/shared/ui` (`index.html`, `style.css`,
+`app.js`) rather than server-rendered markup, so both implementations serve the
+same files: the Go build embeds the directory with `go:embed`, the Worker
+publishes it through [static assets](https://developers.cloudflare.com/workers/static-assets/).
+
+The page renders nothing server-side — it calls `/api/resolve` and builds the
+result with `textContent` and `setAttribute`, never `innerHTML`. Error wording
+lives only in `app.js`, keyed by the `code` the API returns
+(`unsupported_url`, `invalid_url`, `blocked_destination`, `too_many_hops`,
+`no_destination`, `upstream_error`).
+
+Both implementations attach the same headers to those files —
+`Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and a CSP of
+`default-src 'none'` with `script-src`/`style-src`/`connect-src` limited to
+`'self'`. The Worker uses `run_worker_first` so that it can set them itself
+rather than relying on a `_headers` file.
 
 
 # How to Build
@@ -191,6 +211,7 @@ go.mod                          Go module for the Go build
 src/main.go                     Go implementation
 src/main_test.go
 src/shared/rules.json           Allowlist and tracking parameters, shared by both
+src/shared/ui/                  Static page (index.html, style.css, app.js), shared by both
 src/cloudfare-worker/worker.js  Cloudflare Worker implementation
 src/cloudfare-worker/wrangler.jsonc
 src/lambda/nodejs/main.js       Stub, not implemented

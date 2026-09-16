@@ -159,6 +159,9 @@ $ cd src/cloudfare-worker
 $ CLOUDFLARE_ACCOUNT_ID=<account id> npx wrangler deploy
 ```
 
+The Worker is named `anti-tracker` in `wrangler.jsonc`; deploying replaces that
+existing Worker rather than creating a new one.
+
 `CLOUDFLARE_ACCOUNT_ID` is only needed when the authenticated user has more
 than one account; it is kept out of `wrangler.jsonc` on purpose.
 

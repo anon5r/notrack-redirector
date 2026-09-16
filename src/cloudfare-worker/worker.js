@@ -7,10 +7,12 @@
  *
  * セキュリティ方針:
  *   - リダイレクト先は「クエリパラメータに書かれた URL」ではなく、必ず
- *     Worker 側で上流サービスを辿った結果から決定する。これによりクエリ
- *     パラメータを差し替えるだけのオープンリダイレクタ (フィッシング踏み台)
- *     化を防ぐ。
- *   - 上流として接続してよいホストは TRACKER_RULES の allowlist に限定する。
+ *     Worker 側で上流サービスを辿った結果から決定する。
+ *   - 解決結果を表示するだけの経路 (トップページと /api/resolve) は任意の
+ *     ホストを受け付ける。302 を返さないため、他人に「開くだけで飛ぶリンク」
+ *     を送れず、オープンリダイレクタ (フィッシング踏み台) にはならない。
+ *   - 302 を返す経路 (/-/resolve とルート付け替え運用) だけは TRACKER_RULES の
+ *     allowlist に限定する。ここを任意ホストに開くと踏み台になる。
  *
  * トップページ (自ドメインの "/") は URL 入力フォームを提供する。こちらは
  * リダイレクトせず解決結果の URL を表示するだけなので、遷移先にこのサービスの
@@ -39,7 +41,8 @@ const RESOLVE_PARAM = "u";
  */
 const UI_CSP =
     "default-src 'none'; script-src 'self'; style-src 'self'; " +
-    "connect-src 'self'; form-action 'self'; base-uri 'none'";
+    "img-src 'self'; manifest-src 'self'; connect-src 'self'; " +
+    "form-action 'self'; base-uri 'none'";
 
 /**
  * 共有ルール定義。Go 実装 (src/main.go) も同じファイルを読み込む。
@@ -67,7 +70,6 @@ const CODE_UNSUPPORTED_URL = "unsupported_url";
 const CODE_INVALID_URL = "invalid_url";
 const CODE_BLOCKED_DESTINATION = "blocked_destination";
 const CODE_TOO_MANY_HOPS = "too_many_hops";
-const CODE_NO_DESTINATION = "no_destination";
 const CODE_UPSTREAM_ERROR = "upstream_error";
 
 class RedirectorError extends Error {
@@ -227,9 +229,8 @@ async function resolveDestination(target, hostMap) {
 
         if (status < 300 || status > 399 || !location) {
             // これ以上リダイレクトしない = ここが最終地点。
-            if (hop === 0) {
-                throw new RedirectorError("no destination resolved", 502, CODE_NO_DESTINATION);
-            }
+            // 一度もリダイレクトしなかった場合も、入力 URL からトラッキング
+            // パラメータを取り除いた結果には意味があるため結果として返す。
             return { final: current, hops };
         }
 
@@ -335,16 +336,25 @@ function errorCode(err) {
 }
 
 /**
- * 入力文字列を allowlist 済みのトラッキング URL として解釈する。
- * 利用者が入力した値に対する検証なので、失敗は 400 として扱う。
+ * 表示専用の経路で解決してよい URL かを検証する。
+ * allowlist は求めない代わりに、内部ネットワーク宛でないことを確認する。
  */
-function parseTrackerURL(raw) {
+function parseResolvableURL(raw) {
     let parsed;
     try {
         parsed = new URL(raw);
     } catch {
         throw new RedirectorError("invalid url", 400, CODE_INVALID_URL);
     }
+    validateHopURL(parsed);
+    return parsed;
+}
+
+/**
+ * 302 を返す経路のために、allowlist 済みのトラッキング URL として解釈する。
+ */
+function parseTrackerURL(raw) {
+    const parsed = parseResolvableURL(raw);
     if (!isTrackerURL(parsed)) {
         throw new RedirectorError("not a supported tracking url", 400, CODE_UNSUPPORTED_URL);
     }
@@ -353,7 +363,7 @@ function parseTrackerURL(raw) {
 
 /** 入力文字列を検証してから上流を解決する。 */
 async function lookup(raw, hostMap) {
-    const target = parseTrackerURL(raw);
+    const target = parseResolvableURL(raw);
     console.log(`resolving: ${target.toString()}`);
     return resolveDestination(target, hostMap);
 }
@@ -502,6 +512,8 @@ export {
     isNonPublicAddress,
     isTrackerHost,
     isTrackerURL,
+    parseResolvableURL,
+    parseTrackerURL,
     parseHostMap,
     resolveDestination,
     stripTrackingParams,

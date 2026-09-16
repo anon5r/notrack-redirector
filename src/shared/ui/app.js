@@ -15,22 +15,33 @@
  * 管理する。
  */
 const ERROR_MESSAGES = {
-  unsupported_url: "対応していないサービスの URL です。下の対応サービス一覧を確認してください。",
+  unsupported_url: "このサービスは直接リダイレクトに対応していません。",
   invalid_url: "URL の形式が正しくありません。",
-  blocked_destination: "安全でないリダイレクト先が含まれていたため中断しました。",
+  blocked_destination: "そのアドレスは指定できません。",
   too_many_hops: "リダイレクトが多すぎるため中断しました。",
-  no_destination: "この URL はリダイレクトを返しませんでした。",
   upstream_error: "リダイレクト先を取得できませんでした。時間をおいて再度試してください。",
 };
 
 const DEFAULT_ERROR_MESSAGE = ERROR_MESSAGES.upstream_error;
 
+/**
+ * 「解決したら自動で開く」の保存先。
+ *
+ * この設定は端末にだけ保存し、URL パラメータからは絶対に有効化しない。
+ * URL で指定できてしまうと「開くだけで任意の URL へ飛ぶリンク」を他人に
+ * 送れることになり、このサービスがフィッシングの踏み台になる。
+ */
+const AUTO_OPEN_KEY = "notrack:auto-open";
+
 const el = {
   input: document.getElementById("input"),
+  paste: document.getElementById("paste"),
+  autoOpen: document.getElementById("auto-open"),
   status: document.getElementById("status"),
   error: document.getElementById("error"),
   result: document.getElementById("result"),
   destination: document.getElementById("destination"),
+  noRedirect: document.getElementById("no-redirect"),
   copy: document.getElementById("copy"),
   openBlank: document.getElementById("open-blank"),
   openSelf: document.getElementById("open-self"),
@@ -38,6 +49,32 @@ const el = {
   hops: document.getElementById("hops"),
   trackers: document.getElementById("trackers"),
 };
+
+/** localStorage は利用できない環境があるため、失敗しても動作を止めない。 */
+function readAutoOpen() {
+  try {
+    return localStorage.getItem(AUTO_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeAutoOpen(enabled) {
+  try {
+    localStorage.setItem(AUTO_OPEN_KEY, enabled ? "1" : "0");
+  } catch {
+    // 保存できなくても今回の操作には影響しない。
+  }
+}
+
+/**
+ * 共有シートから渡される文字列には「タイトル 改行 URL」のように URL 以外が
+ * 含まれるため、最初の http(s) URL を取り出す。
+ */
+function extractURL(raw) {
+  const match = String(raw).match(/https?:\/\/\S+/);
+  return match ? match[0] : String(raw).trim();
+}
 
 function showError(message) {
   el.error.textContent = message;
@@ -61,6 +98,7 @@ function showResult(body) {
     el.hops.append(item);
   }
   el.hopsBlock.hidden = hops.length === 0;
+  el.noRedirect.hidden = hops.length !== 0;
 
   el.error.hidden = true;
   el.result.hidden = false;
@@ -81,7 +119,14 @@ async function resolve(raw) {
       showError(ERROR_MESSAGES[body.code] || DEFAULT_ERROR_MESSAGE);
       return;
     }
+
     showResult(body);
+
+    if (el.autoOpen.checked) {
+      // ページ自体が no-referrer なので、遷移先に参照元は渡らない。
+      // 履歴を残さないよう replace で遷移する。
+      location.replace(body.destination);
+    }
   } catch {
     showError(DEFAULT_ERROR_MESSAGE);
   } finally {
@@ -117,12 +162,32 @@ el.copy.addEventListener("click", async () => {
   }
 });
 
+el.paste.addEventListener("click", async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    const raw = extractURL(text);
+    if (!raw) {
+      return;
+    }
+    el.input.value = raw;
+    resolve(raw);
+  } catch {
+    // 読み取りが許可されない環境では、利用者が入力欄に貼り付ければよい。
+    el.input.focus();
+  }
+});
+
+el.autoOpen.checked = readAutoOpen();
+el.autoOpen.addEventListener("change", () => writeAutoOpen(el.autoOpen.checked));
+
 loadTrackers();
 
-// フォームは通常の GET 送信で ?u= を付けて遷移する。結果はその値から描画する
-// ため、解決結果の URL をそのまま共有できる。
-const requested = new URLSearchParams(location.search).get("u");
+// フォームは通常の GET 送信で ?u= を付けて遷移する。共有シートから起動された
+// 場合は url / text にも入りうるため、いずれかから URL を取り出す。
+const params = new URLSearchParams(location.search);
+const requested = params.get("u") || params.get("url") || params.get("text");
 if (requested) {
-  el.input.value = requested;
-  resolve(requested);
+  const raw = extractURL(requested);
+  el.input.value = raw;
+  resolve(raw);
 }

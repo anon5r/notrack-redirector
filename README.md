@@ -6,18 +6,23 @@ the final destination with tracking parameters stripped off.
 
 Two ways to use it:
 
-- **Paste a URL into the top page.** The resolved URL is only *shown*, never
-  followed, so this service never appears as a `Referer` on the destination.
+- **Paste any tracking URL into the top page.** Works with any host — mail
+  trackers, click wrappers, affiliate links. The resolved URL is only *shown*,
+  never followed by the server, so this service never appears as a `Referer` on
+  the destination. Optionally the page can open it for you (see below).
 - **Point DNS of the tracking hostname at this service**, or call the explicit
-  `/-/resolve` endpoint, to get a `302` to the cleaned destination.
+  `/-/resolve` endpoint, to get a `302` to the cleaned destination. This path is
+  restricted to an allowlist.
 
 
 # How it works
 
-1. The incoming request is matched against an allowlist of known affiliate /
-   tracking services (host + path). Anything else is rejected.
-2. The service fetches the tracking URL itself and follows the redirect chain
-   (`Location` headers only, up to 8 hops, no cookies, no forwarded headers).
+1. The URL is checked: it must be an absolute `http(s)` URL that does not point
+   at a loopback, private, CGNAT or link-local address.
+2. The service fetches the URL itself and follows the redirect chain (`Location`
+   headers only, up to 8 hops, no cookies, no forwarded headers). A URL that
+   does not redirect is kept as-is, so pasting an ordinary link still strips its
+   tracking parameters.
 3. Tracking parameters (`utm_*`, `gclid`, Amazon `tag`, Rakuten `scid`, ...) are
    removed from the resolved URL.
 4. The cleaned URL is shown on the top page, returned as JSON, or sent as a
@@ -25,17 +30,23 @@ Two ways to use it:
    `Referrer-Policy: no-referrer`.
 
 Because the destination is taken from what the upstream service actually
-returns — never from a URL written in a query parameter — this service **cannot
-be turned into an open redirector** by crafting a request such as
-`/svt/ejp?a8mat=https://phishing.example/`. It also works for tracking URLs that
-carry no destination URL in their parameters at all.
+returns — never from a URL written in a query parameter — this works for
+tracking URLs that carry no destination URL in their parameters at all.
 
 ## Security notes
 
-- Only hosts listed in `src/shared/rules.json` are fetched. **Never add a URL
-  shortener** (`t.co`, `bit.ly`, ...) to that list: anyone can register an
-  arbitrary destination there, which would reintroduce the open redirector
-  problem.
+**The page never redirects and the server never returns a `302` for an
+arbitrary host.** That is what keeps this from becoming an open redirector: you
+cannot send someone a link to this service that lands them on a site of your
+choosing. Two rules preserve that:
+
+- The `302` paths (`/-/resolve` and the DNS-transition path) stay restricted to
+  the hosts in `src/shared/rules.json`. **Never add a URL shortener** (`t.co`,
+  `bit.ly`, ...) to that list: anyone can register an arbitrary destination
+  there, which would turn those paths into an open redirector.
+- "Open automatically" is stored per device in `localStorage` and **cannot be
+  switched on through a URL parameter**, so a crafted link cannot make someone
+  else's browser follow it. A test asserts this.
 - Redirect hops pointing at loopback, private, CGNAT, link-local or `.local`
   addresses are rejected (SSRF protection). In the Go build this is enforced at
   dial time against the resolved IP as well.
@@ -48,11 +59,11 @@ carry no destination URL in their parameters at all.
 
 | Path | Description |
 | ---- | ----------- |
-| `/` | URL input form (a static page). With `?u=<tracking url>` the page resolves it through the API and shows the destination **without redirecting**. |
-| `/api/resolve?u=<tracking url>` | Resolution as JSON: `{"original", "destination", "hops"}`, or `{"error", "code"}` on failure. |
-| `/api/trackers` | The supported hosts, used to render the list on the page. |
-| `/-/resolve?u=<tracking url>` | Returns a `302` to the cleaned destination. |
-| `/<tracking path>?<query>` | Returns a `302`. Used when the tracking hostname is pointed at this service by DNS or a Worker route. |
+| `/` | URL input form (a static page). With `?u=<url>` the page resolves it through the API and shows the destination **without redirecting**. Any host is accepted. |
+| `/api/resolve?u=<url>` | Resolution as JSON: `{"original", "destination", "hops"}`, or `{"error", "code"}` on failure. Any host is accepted. |
+| `/api/trackers` | The allowlisted hosts, used to render the list on the page. |
+| `/-/resolve?u=<tracking url>` | Returns a `302` to the cleaned destination. **Allowlisted hosts only.** |
+| `/<tracking path>?<query>` | Returns a `302`. Used when the tracking hostname is pointed at this service by DNS or a Worker route. **Allowlisted hosts only.** |
 
 `hops` and the route shown on the page are reduced to scheme + host + path; the
 query strings of intermediate hops are not exposed.
@@ -67,7 +78,10 @@ The page is served with `Referrer-Policy: no-referrer` and a matching
 - **Open in this tab** — `rel="noreferrer"`.
 
 Both links suppress the `Referer` header, so the destination cannot see that the
-visit came through this service.
+visit came through this service. With **open automatically** enabled the page
+navigates with `location.replace` once a result comes back, which leaves no
+history entry and — because the page itself is `no-referrer` — sends no
+`Referer` either.
 
 
 # Configuration
@@ -111,7 +125,13 @@ The page renders nothing server-side — it calls `/api/resolve` and builds the
 result with `textContent` and `setAttribute`, never `innerHTML`. Error wording
 lives only in `app.js`, keyed by the `code` the API returns
 (`unsupported_url`, `invalid_url`, `blocked_destination`, `too_many_hops`,
-`no_destination`, `upstream_error`).
+`upstream_error`).
+
+The page is built for phone use: 48px tap targets, a 16px input (so iOS does not
+zoom on focus), a **paste and resolve** button, and a web app manifest with a
+`share_target`, so on Android it can be installed and receive URLs straight from
+the system share sheet. Shared text often arrives as "title + URL", so the first
+`http(s)` URL is extracted from it.
 
 Both implementations attach the same headers to those files —
 `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and a CSP of
@@ -195,7 +215,10 @@ $ npm --prefix src/cloudfare-worker run dev
 ```
 
 
-# Supported track URL patterns
+# Hosts allowed on the `302` paths
+
+Any URL can be resolved through the page and `/api/resolve`. The list below only
+governs the paths that issue a real redirect.
 
 - `https://px.a8.net/svt/...`
 - `https://hb.afl.rakuten.co.jp/ichiba/...`
@@ -214,7 +237,9 @@ go.mod                          Go module for the Go build
 src/main.go                     Go implementation
 src/main_test.go
 src/shared/rules.json           Allowlist and tracking parameters, shared by both
-src/shared/ui/                  Static page (index.html, style.css, app.js), shared by both
+src/shared/ui/                  Static page shared by both (index.html,
+                                style.css, app.js, icon.svg,
+                                manifest.webmanifest)
 src/cloudfare-worker/worker.js  Cloudflare Worker implementation
 src/cloudfare-worker/wrangler.jsonc
 src/lambda/nodejs/main.js       Stub, not implemented

@@ -280,17 +280,59 @@ func TestResolveDestinationStopsAtHopLimit(t *testing.T) {
 	}
 }
 
-func TestResolveDestinationRejectsNonRedirectingUpstream(t *testing.T) {
+func TestResolveDestinationKeepsNonRedirectingURL(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
 
-	client := newTestClient(t, "px.a8.net="+strings.TrimPrefix(upstream.URL, "http://"))
+	client := newTestClient(t, "example.com="+strings.TrimPrefix(upstream.URL, "http://"))
 
-	_, err := resolveDestination(client, mustParse(t, "http://px.a8.net/svt/ejp"))
-	if !errors.Is(err, errNoDestination) {
-		t.Fatalf("err = %v, want errNoDestination", err)
+	// リダイレクトしない URL でも、トラッキングパラメータを除いた結果を返す。
+	result, err := resolveDestination(client, mustParse(t, "http://example.com/item?id=1&utm_source=mail"))
+	if err != nil {
+		t.Fatalf("resolveDestination: %v", err)
+	}
+	if len(result.Hops) != 0 {
+		t.Errorf("hops = %v, want none", result.Hops)
+	}
+	if got := stripTrackingParams(result.Final).String(); got != "http://example.com/item?id=1" {
+		t.Errorf("destination = %q", got)
+	}
+}
+
+func TestParseResolvableURL(t *testing.T) {
+	// allowlist にないホストでも表示専用の経路では受け付ける。
+	for _, raw := range []string{
+		"https://links1.cloudflare.com/s/c/abcdef",
+		"http://r.mail-sib.craft.do/mk/cl/f/sh/token",
+	} {
+		if _, err := parseResolvableURL(raw); err != nil {
+			t.Errorf("parseResolvableURL(%q) = %v, want nil", raw, err)
+		}
+	}
+
+	// 内部ネットワークや非 HTTP スキームは拒否する。
+	for _, raw := range []string{
+		"http://127.0.0.1/admin",
+		"http://169.254.169.254/latest/meta-data/",
+		"file:///etc/passwd",
+		"javascript:alert(1)",
+		"not a url",
+		"/relative/path",
+	} {
+		if _, err := parseResolvableURL(raw); err == nil {
+			t.Errorf("parseResolvableURL(%q) = nil, want error", raw)
+		}
+	}
+}
+
+func TestParseTrackerURLStillRequiresAllowlist(t *testing.T) {
+	if _, err := parseTrackerURL("https://px.a8.net/svt/ejp?a8mat=abc"); err != nil {
+		t.Errorf("allowlisted url rejected: %v", err)
+	}
+	if _, err := parseTrackerURL("https://links1.cloudflare.com/s/c/abcdef"); !errors.Is(err, errNotTracker) {
+		t.Errorf("err = %v, want errNotTracker", err)
 	}
 }
 
@@ -323,7 +365,7 @@ func doRequest(t *testing.T, client *http.Client, target string) *httptest.Respo
 func TestServesStaticUI(t *testing.T) {
 	_, client := newStubUpstream(t)
 
-	for _, path := range []string{"/", "/style.css", "/app.js"} {
+	for _, path := range []string{"/", "/style.css", "/app.js", "/icon.svg", "/manifest.webmanifest"} {
 		w := doRequest(t, client, path)
 		if w.Code != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want 200", path, w.Code)
@@ -337,8 +379,13 @@ func TestServesStaticUI(t *testing.T) {
 		}
 	}
 
+	manifest := doRequest(t, client, "/manifest.webmanifest")
+	if got := manifest.Header().Get("Content-Type"); got != "application/manifest+json" {
+		t.Errorf("manifest Content-Type = %q", got)
+	}
+
 	index := doRequest(t, client, "/").Body.String()
-	for _, want := range []string{`name="u"`, "notrack-redirector", "/app.js"} {
+	for _, want := range []string{`name="u"`, "notrack-redirector", "/app.js", "/manifest.webmanifest"} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index.html does not contain %q", want)
 		}
@@ -398,17 +445,17 @@ func TestHandleAPI(t *testing.T) {
 		t.Errorf("hops = %v, want 1 entry", got.Hops)
 	}
 
-	bad := doRequest(t, client, apiEndpoint+"?u=https%3A%2F%2Fphishing.example%2F")
-	if bad.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", bad.Code)
+	bad := doRequest(t, client, apiEndpoint+"?u=http%3A%2F%2F127.0.0.1%2Fadmin")
+	if bad.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", bad.Code)
 	}
 
 	var badBody apiResponse
 	if err := json.Unmarshal(bad.Body.Bytes(), &badBody); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if badBody.Code != codeUnsupportedURL {
-		t.Errorf("code = %q, want %q", badBody.Code, codeUnsupportedURL)
+	if badBody.Code != codeBlockedDestination {
+		t.Errorf("code = %q, want %q", badBody.Code, codeBlockedDestination)
 	}
 }
 

@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
     errorCode,
+    parseResolvableURL,
+    parseTrackerURL,
     handleRequest,
     hopLabels,
     isNonPublicAddress,
@@ -158,12 +160,37 @@ test("resolveDestination はホップ上限で打ち切る", async (t) => {
     });
 });
 
-test("resolveDestination はリダイレクトしない上流を拒否する", async (t) => {
-    const restore = stubFetch({ "/svt/ejp": { status: 200 } });
+test("resolveDestination はリダイレクトしない URL もそのまま返す", async (t) => {
+    const restore = stubFetch({ "/item": { status: 200 } });
     t.after(restore);
 
-    await assert.rejects(() => resolveDestination(new URL("https://px.a8.net/svt/ejp"), new Map()), {
-        status: 502,
+    const result = await resolveDestination(new URL("https://example.com/item?id=1&utm_source=mail"), new Map());
+    assert.equal(result.hops.length, 0);
+    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/item?id=1");
+});
+
+test("parseResolvableURL は allowlist 外のホストも受け付ける", () => {
+    for (const raw of [
+        "https://links1.cloudflare.com/s/c/abcdef",
+        "http://r.mail-sib.craft.do/mk/cl/f/sh/token",
+    ]) {
+        assert.doesNotThrow(() => parseResolvableURL(raw), raw);
+    }
+
+    for (const raw of [
+        "http://127.0.0.1/admin",
+        "http://169.254.169.254/latest/meta-data/",
+        "file:///etc/passwd",
+        "not a url",
+    ]) {
+        assert.throws(() => parseResolvableURL(raw), raw);
+    }
+});
+
+test("parseTrackerURL は allowlist を要求し続ける", () => {
+    assert.doesNotThrow(() => parseTrackerURL("https://px.a8.net/svt/ejp?a8mat=abc"));
+    assert.throws(() => parseTrackerURL("https://links1.cloudflare.com/s/c/abcdef"), {
+        code: "unsupported_url",
     });
 });
 
@@ -245,9 +272,9 @@ test("/api/resolve は JSON を返す", async (t) => {
     assert.equal(body.destination, "https://example.com/final?id=1");
     assert.deepEqual(body.hops, ["https://example.com/final"]);
 
-    const bad = await get("https://redirector.example/api/resolve?u=https%3A%2F%2Fphishing.example%2F");
-    assert.equal(bad.status, 400);
-    assert.equal((await bad.json()).code, "unsupported_url");
+    const bad = await get("https://redirector.example/api/resolve?u=http%3A%2F%2F127.0.0.1%2Fadmin");
+    assert.equal(bad.status, 403);
+    assert.equal((await bad.json()).code, "blocked_destination");
 });
 
 test("トラッキングホスト宛のリクエストは従来どおり 302 を返す", async (t) => {
@@ -261,4 +288,57 @@ test("トラッキングホスト宛のリクエストは従来どおり 302 を
 test("ループガードヘッダ付きのリクエストは 508 を返す", async () => {
     const response = await get("https://px.a8.net/svt/ejp?a8mat=abc", { "X-Notrack-Redirector": "1" });
     assert.equal(response.status, 508);
+});
+
+test("app.js が参照する要素 ID が index.html に存在する", async () => {
+    const uiPath = (name) => new URL(`../shared/ui/${name}`, import.meta.url);
+    const [html, script] = await Promise.all([
+        readFile(uiPath("index.html"), "utf8"),
+        readFile(uiPath("app.js"), "utf8"),
+    ]);
+
+    const referenced = [...script.matchAll(/getElementById\("([^"]+)"\)/g)].map((m) => m[1]);
+    assert.ok(referenced.length > 0, "app.js does not reference any element");
+
+    const defined = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+    for (const id of referenced) {
+        assert.ok(defined.has(id), `index.html is missing id="${id}"`);
+    }
+});
+
+test("index.html が参照する静的ファイルが存在する", async () => {
+    const html = await readFile(new URL("../shared/ui/index.html", import.meta.url), "utf8");
+    const refs = [...html.matchAll(/(?:href|src)="\/([^"]+)"/g)].map((m) => m[1]);
+
+    assert.ok(refs.includes("app.js"));
+    assert.ok(refs.includes("style.css"));
+    assert.ok(refs.includes("manifest.webmanifest"));
+
+    for (const ref of refs) {
+        await readFile(new URL(`../shared/ui/${ref}`, import.meta.url));
+    }
+});
+
+test("manifest の share_target が app.js の読み取るパラメータと一致する", async () => {
+    const uiPath = (name) => new URL(`../shared/ui/${name}`, import.meta.url);
+    const [manifest, script] = await Promise.all([
+        readFile(uiPath("manifest.webmanifest"), "utf8").then(JSON.parse),
+        readFile(uiPath("app.js"), "utf8"),
+    ]);
+
+    for (const name of Object.values(manifest.share_target.params)) {
+        if (name === "title") {
+            continue;
+        }
+        assert.match(script, new RegExp(`params\\.get\\("${name}"\\)`), `app.js does not read "${name}"`);
+    }
+});
+
+test("自動で開く設定は URL パラメータから有効化できない", async () => {
+    const script = await readFile(new URL("../shared/ui/app.js", import.meta.url), "utf8");
+
+    // 端末に保存した設定以外から autoOpen を立てる経路があってはならない。
+    // URL で指定できると「開くだけで任意の URL へ飛ぶリンク」を他人に送れてしまう。
+    const assignments = [...script.matchAll(/autoOpen\.checked\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
+    assert.deepEqual(assignments, ["readAutoOpen()"]);
 });

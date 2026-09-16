@@ -1,55 +1,120 @@
-:root { color-scheme: light dark; }
+/* スマートフォンでの利用を前提に、タップ領域と文字サイズを優先している。 */
+
+:root {
+  color-scheme: light dark;
+  --gap: .6rem;
+  --radius: .5rem;
+  --accent: #2a7d52;
+  --danger: #c0392b;
+  --muted: rgba(127, 127, 127, .18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root { --accent: #7fd4a2; --danger: #ff8a7a; }
+}
+
+* { box-sizing: border-box; }
 
 body {
   margin: 0 auto;
-  padding: 2rem 1rem;
-  max-width: 46rem;
+  padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom, 0px));
+  max-width: 44rem;
   line-height: 1.7;
   font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
 
-h1 { font-size: 1.4rem; }
-h2 { font-size: 1.1rem; margin-top: 2rem; }
-h3 { font-size: 1rem; }
+h1 { font-size: 1.3rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.05rem; margin: 0 0 .5rem; }
 
-form { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1.5rem 0; }
+.lead { margin-top: 0; font-size: .95rem; }
+
+form { margin: 1.25rem 0 .75rem; }
 
 input[type=url] {
-  flex: 1 1 24rem;
-  padding: .6rem .7rem;
-  font: inherit;
+  width: 100%;
+  padding: .75rem;
+  /* iOS で入力時に拡大されないよう 16px 以上を保つ。 */
+  font-size: 16px;
+  font-family: inherit;
   border: 1px solid currentColor;
-  border-radius: .3rem;
+  border-radius: var(--radius);
   background: transparent;
   color: inherit;
+}
+
+.row {
+  display: flex;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  margin-top: var(--gap);
 }
 
 button, .action {
+  flex: 1 1 10rem;
+  min-height: 48px;
   padding: .6rem 1rem;
   font: inherit;
+  text-align: center;
   cursor: pointer;
   text-decoration: none;
   border: 1px solid currentColor;
-  border-radius: .3rem;
+  border-radius: var(--radius);
   background: transparent;
   color: inherit;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
 }
+
+button.primary, .action.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+  font-size: .95rem;
+  cursor: pointer;
+}
+
+.toggle input { width: 1.15rem; height: 1.15rem; }
 
 code { word-break: break-all; font-size: .95em; }
 
-#result { border: 1px solid currentColor; border-radius: .4rem; padding: 1rem; }
-.destination { padding: .7rem; border-radius: .3rem; background: rgba(127, 127, 127, .15); }
-.actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+#result {
+  margin-top: 1.25rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.destination {
+  margin: 0;
+  padding: .75rem;
+  border-radius: var(--radius);
+  background: var(--muted);
+  /* 長い URL でも横スクロールを起こさない。 */
+  overflow-wrap: anywhere;
+}
+
 .note { font-size: .85rem; opacity: .75; }
 
 .error {
-  padding: .8rem 1rem;
-  border-radius: .4rem;
-  border: 1px solid #c0392b;
-  color: #c0392b;
+  padding: .75rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  color: var(--danger);
 }
 
-ol, ul { padding-left: 1.4rem; }
+details { margin-top: 1rem; }
+summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+
+ol, ul { padding-left: 1.3rem; }
 
 [hidden] { display: none !important; }

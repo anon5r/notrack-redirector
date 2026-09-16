@@ -6,11 +6,13 @@
 //
 // セキュリティ方針:
 //   - リダイレクト先は「クエリパラメータに書かれた URL」ではなく、必ず
-//     サーバー側で上流サービスを辿った結果から決定する。これによりクエリ
-//     パラメータを差し替えるだけのオープンリダイレクタ (フィッシング踏み台)
-//     化を防ぐ。
-//   - 上流として接続してよいホストは trackerRules の allowlist に限定する。
-//   - 接続先 IP が内部ネットワークでないことを検証する (SSRF 対策)。
+//     サーバー側で上流サービスを辿った結果から決定する。
+//   - 解決結果を表示するだけの経路 (トップページと /api/resolve) は任意の
+//     ホストを受け付ける。302 を返さないため、他人に「開くだけで飛ぶリンク」
+//     を送れず、オープンリダイレクタ (フィッシング踏み台) にはならない。
+//   - 302 を返す経路 (/-/resolve と DNS 付け替え運用) だけは trackerRules の
+//     allowlist に限定する。ここを任意ホストに開くと踏み台になる。
+//   - 接続先が内部ネットワークでないことを検証する (SSRF 対策)。
 //
 // トップページ (自ドメインの "/") は URL 入力フォームを提供する。こちらは
 // リダイレクトせず解決結果の URL を表示するだけなので、遷移先にこのサービスの
@@ -26,6 +28,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,7 +57,8 @@ const (
 	// uiCSP は共有 UI に付与する Content-Security-Policy。
 	// スクリプトとスタイルは同一オリジンの静的ファイルだけを許可する。
 	uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; " +
-		"connect-src 'self'; form-action 'self'; base-uri 'none'"
+		"img-src 'self'; manifest-src 'self'; connect-src 'self'; " +
+		"form-action 'self'; base-uri 'none'"
 
 	envListenAddr      = "LISTEN_ADDR"
 	envUpstreamHostMap = "UPSTREAM_HOST_MAP"
@@ -67,7 +71,6 @@ var (
 	errTooManyHops    = errors.New("too many redirect hops")
 	errBlockedAddress = errors.New("blocked upstream address")
 	errLoopDetected   = errors.New("redirect loop back to this service")
-	errNoDestination  = errors.New("no destination resolved")
 )
 
 //go:embed shared/rules.json
@@ -270,7 +273,7 @@ func handleAPI(client *http.Client, w http.ResponseWriter, r *http.Request) {
 
 // lookup は入力文字列を検証してから上流を解決する。
 func lookup(client *http.Client, raw string) (*resolveResult, error) {
-	target, err := parseTrackerURL(raw)
+	target, err := parseResolvableURL(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +287,28 @@ func lookup(client *http.Client, raw string) (*resolveResult, error) {
 	return result, nil
 }
 
-// parseTrackerURL は入力文字列を allowlist 済みのトラッキング URL として解釈する。
-// 利用者が入力した値に対する検証なので、失敗は 400 として扱う。
-func parseTrackerURL(raw string) (*url.URL, error) {
+// parseResolvableURL は表示専用の経路で解決してよい URL かを検証する。
+// allowlist は求めない代わりに、内部ネットワーク宛でないことを確認する。
+func parseResolvableURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errInvalidURL, err)
+	}
+	if !u.IsAbs() || u.Host == "" {
+		return nil, fmt.Errorf("%w: %s", errInvalidURL, raw)
+	}
+	if err := validateHopURL(u); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// parseTrackerURL は 302 を返す経路のために、allowlist 済みの
+// トラッキング URL として解釈する。
+func parseTrackerURL(raw string) (*url.URL, error) {
+	u, err := parseResolvableURL(raw)
+	if err != nil {
+		return nil, err
 	}
 	if !isTrackerURL(u) {
 		return nil, errNotTracker
@@ -303,7 +322,6 @@ const (
 	codeInvalidURL         = "invalid_url"
 	codeBlockedDestination = "blocked_destination"
 	codeTooManyHops        = "too_many_hops"
-	codeNoDestination      = "no_destination"
 	codeUpstreamError      = "upstream_error"
 )
 
@@ -318,8 +336,6 @@ func errorCode(err error) string {
 		return codeBlockedDestination
 	case errors.Is(err, errTooManyHops), errors.Is(err, errLoopDetected):
 		return codeTooManyHops
-	case errors.Is(err, errNoDestination):
-		return codeNoDestination
 	default:
 		return codeUpstreamError
 	}
@@ -363,6 +379,11 @@ func newUIHandler() http.Handler {
 	if err != nil {
 		panic(fmt.Sprintf("invalid embedded ui: %v", err))
 	}
+	// Go の既定の MIME テーブルには含まれないため明示する。
+	if err := mime.AddExtensionType(".webmanifest", "application/manifest+json"); err != nil {
+		panic(fmt.Sprintf("cannot register webmanifest mime type: %v", err))
+	}
+
 	fileServer := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -497,9 +518,8 @@ func resolveDestination(client *http.Client, target *url.URL) (*resolveResult, e
 
 		if status < 300 || status > 399 || location == "" {
 			// これ以上リダイレクトしない = ここが最終地点。
-			if hop == 0 {
-				return nil, errNoDestination
-			}
+			// 一度もリダイレクトしなかった場合も、入力 URL からトラッキング
+			// パラメータを取り除いた結果には意味があるため結果として返す。
 			return &resolveResult{Final: current, Hops: hops}, nil
 		}
 

@@ -236,7 +236,17 @@ test("共有 UI を配信する", async (t) => {
         const response = await get(`https://redirector.example${path}`);
         assert.equal(response.status, 200, path);
         assert.equal(response.headers.get("Referrer-Policy"), "no-referrer", path);
-        assert.match(response.headers.get("Content-Security-Policy"), /script-src 'self'/, path);
+        const csp = response.headers.get("Content-Security-Policy");
+        assert.match(csp, /script-src 'self';/, path);
+        // 認証プロキシの内側でもページが動くよう、リダイレクト先が検査される
+        // ディレクティブはログイン画面を許可する。
+        for (const directive of ["style-src", "manifest-src", "connect-src", "form-action"]) {
+            assert.ok(
+                csp.includes(`${directive} 'self' https://*.cloudflareaccess.com`),
+                `${path}: ${directive} does not allow the Access login screen`,
+            );
+        }
+        assert.doesNotMatch(csp, /unsafe-(inline|eval)/, path);
     }
 
     const index = await (await get("https://redirector.example/")).text();
@@ -392,4 +402,13 @@ test("resolveDestination は meta refresh の危険な宛先を拒否する", as
     await assert.rejects(() => resolveDestination(new URL("https://tracker.example/mk/cl"), new Map()), {
         status: 403,
     });
+});
+
+test("認証プロキシのセッション切れを検出できる", async () => {
+    const script = await readFile(new URL("../shared/ui/app.js", import.meta.url), "utf8");
+
+    // リダイレクトを追うと別オリジンへの要求になり CORS で失敗するため、
+    // 追わずに不透明な応答として受け取る必要がある。
+    assert.match(script, /redirect: "manual"/);
+    assert.match(script, /opaqueredirect/);
 });

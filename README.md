@@ -138,9 +138,30 @@ the system share sheet. Shared text often arrives as "title + URL", so the first
 
 Both implementations attach the same headers to those files —
 `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and a CSP of
-`default-src 'none'` with `script-src`/`style-src`/`connect-src` limited to
-`'self'`. The Worker uses `run_worker_first` so that it can set them itself
-rather than relying on a `_headers` file.
+`default-src 'none'` with `script-src` limited to `'self'` and no
+`unsafe-inline`. The Worker uses `run_worker_first` so that it can set them
+itself rather than relying on a `_headers` file.
+
+
+# Behind an authenticating proxy
+
+The service works behind Cloudflare Access (or a similar proxy), which is the
+recommended way to run it — see the security notes above.
+
+Two things are needed for that, both already in place:
+
+- `style-src`, `manifest-src`, `connect-src` and `form-action` allow
+  `https://*.cloudflareaccess.com`. CSP checks the *redirect target*, not just
+  the request URL, so an expired session redirecting to the login screen is
+  otherwise blocked outright — including plain form submissions.
+- The page calls the API with `redirect: "manual"`, so a login redirect comes
+  back as an opaque response instead of failing CORS on the login origin. The
+  page detects it and offers a reload button to re-authenticate, rather than
+  reporting it as a resolution failure.
+
+If a content blocker rewrites the page's CSP (AdGuard does this, adding
+`local.adguard.org` to the directives), the Access login screen can still be
+blocked. Allowlist the service's hostname in the blocker if that happens.
 
 
 # How to Build

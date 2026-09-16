@@ -22,6 +22,12 @@ const ERROR_MESSAGES = {
   upstream_error: "リダイレクト先を取得できませんでした。時間をおいて再度試してください。",
 };
 
+/**
+ * 認証の有効期限が切れたときの文言。
+ * サーバーから返るコードではなく、応答の形から画面側で判断する。
+ */
+const AUTH_MESSAGE = "認証の有効期限が切れています。再読み込みして認証してください。";
+
 const DEFAULT_ERROR_MESSAGE = ERROR_MESSAGES.upstream_error;
 
 /**
@@ -39,6 +45,8 @@ const el = {
   autoOpen: document.getElementById("auto-open"),
   status: document.getElementById("status"),
   error: document.getElementById("error"),
+  reauth: document.getElementById("reauth"),
+  reload: document.getElementById("reload"),
   result: document.getElementById("result"),
   destination: document.getElementById("destination"),
   noRedirect: document.getElementById("no-redirect"),
@@ -76,10 +84,35 @@ function extractURL(raw) {
   return match ? match[0] : String(raw).trim();
 }
 
-function showError(message) {
+function showError(message, needsAuth = false) {
   el.error.textContent = message;
   el.error.hidden = false;
+  el.reauth.hidden = !needsAuth;
   el.result.hidden = true;
+}
+
+/**
+ * API を呼ぶ。
+ *
+ * Cloudflare Access のような認証プロキシの内側に置くと、セッションが切れた
+ * 時点で API へのリクエストがログイン画面へリダイレクトされる。リダイレクトを
+ * 追うと別オリジンへの要求になり CORS で失敗して原因が分からなくなるため、
+ * redirect: "manual" で追わずに不透明な応答として受け取る。
+ */
+function requestJSON(path) {
+  return fetch(path, {
+    redirect: "manual",
+    headers: { Accept: "application/json" },
+  });
+}
+
+/** 応答が認証プロキシによるログイン画面への誘導かを判定する。 */
+function isAuthRedirect(response) {
+  if (response.type === "opaqueredirect" || response.status === 0) {
+    return true;
+  }
+  const contentType = response.headers.get("Content-Type") || "";
+  return !contentType.includes("application/json");
 }
 
 function showResult(body) {
@@ -110,9 +143,13 @@ async function resolve(raw) {
   el.result.hidden = true;
 
   try {
-    const response = await fetch(`/api/resolve?u=${encodeURIComponent(raw)}`, {
-      headers: { Accept: "application/json" },
-    });
+    const response = await requestJSON(`/api/resolve?u=${encodeURIComponent(raw)}`);
+
+    if (isAuthRedirect(response)) {
+      showError(AUTH_MESSAGE, true);
+      return;
+    }
+
     const body = await response.json();
 
     if (!response.ok || !body.destination) {
@@ -120,6 +157,7 @@ async function resolve(raw) {
       return;
     }
 
+    el.reauth.hidden = true;
     showResult(body);
 
     if (el.autoOpen.checked) {
@@ -136,7 +174,11 @@ async function resolve(raw) {
 
 async function loadTrackers() {
   try {
-    const response = await fetch("/api/trackers", { headers: { Accept: "application/json" } });
+    const response = await requestJSON("/api/trackers");
+    if (isAuthRedirect(response)) {
+      // 一覧は補助的な表示なので、ここでは黙って諦める。
+      return;
+    }
     const body = await response.json();
     const hosts = Array.isArray(body.trackers) ? body.trackers : [];
 
@@ -176,6 +218,8 @@ el.paste.addEventListener("click", async () => {
     el.input.focus();
   }
 });
+
+el.reload.addEventListener("click", () => location.reload());
 
 el.autoOpen.checked = readAutoOpen();
 el.autoOpen.addEventListener("change", () => writeAutoOpen(el.autoOpen.checked));

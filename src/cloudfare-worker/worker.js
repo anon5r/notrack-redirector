@@ -37,13 +37,27 @@ const TRACKERS_ENDPOINT = "/api/trackers";
 const RESOLVE_PARAM = "u";
 
 /**
+ * Cloudflare Access のログイン画面。
+ *
+ * このサービスを Access の内側に置くと、セッション切れのリクエストは
+ * ここへリダイレクトされる。CSP はリダイレクト先も検査するため、
+ * 許可しておかないと再認証が始まらずページが動かなくなる。
+ */
+const ACCESS_LOGIN_ORIGIN = "https://*.cloudflareaccess.com";
+
+/**
  * 共有 UI に付与する Content-Security-Policy。
- * スクリプトとスタイルは同一オリジンの静的ファイルだけを許可する。
+ * スクリプトは同一オリジンの静的ファイルだけを許可する。
  */
 const UI_CSP =
-    "default-src 'none'; script-src 'self'; style-src 'self'; " +
-    "img-src 'self'; manifest-src 'self'; connect-src 'self'; " +
-    "form-action 'self'; base-uri 'none'";
+    "default-src 'none'; " +
+    "script-src 'self'; " +
+    "img-src 'self'; " +
+    "base-uri 'none'; " +
+    `style-src 'self' ${ACCESS_LOGIN_ORIGIN}; ` +
+    `manifest-src 'self' ${ACCESS_LOGIN_ORIGIN}; ` +
+    `connect-src 'self' ${ACCESS_LOGIN_ORIGIN}; ` +
+    `form-action 'self' ${ACCESS_LOGIN_ORIGIN}`;
 
 /**
  * 共有ルール定義。Go 実装 (src/main.go) も同じファイルを読み込む。

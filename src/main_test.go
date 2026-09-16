@@ -569,3 +569,22 @@ func TestResolveDestinationRejectsUnsafeMetaRefresh(t *testing.T) {
 		t.Fatalf("err = %v, want errBlockedAddress", err)
 	}
 }
+
+func TestUICSPAllowsAccessLogin(t *testing.T) {
+	// 認証プロキシの内側でもページが動くよう、リダイレクト先が検査される
+	// ディレクティブはログイン画面を許可する。
+	for _, directive := range []string{"style-src", "manifest-src", "connect-src", "form-action"} {
+		want := directive + " 'self' " + accessLoginOrigin
+		if !strings.Contains(uiCSP, want) {
+			t.Errorf("csp does not contain %q: %s", want, uiCSP)
+		}
+	}
+
+	// スクリプトは同一オリジンのみ。インライン実行は許可しない。
+	if !strings.Contains(uiCSP, "script-src 'self';") {
+		t.Errorf("script-src must stay limited to 'self': %s", uiCSP)
+	}
+	if strings.Contains(uiCSP, "unsafe-inline") || strings.Contains(uiCSP, "unsafe-eval") {
+		t.Errorf("csp must not allow inline or eval: %s", uiCSP)
+	}
+}

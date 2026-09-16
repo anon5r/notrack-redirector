@@ -54,11 +54,23 @@ const (
 	trackersEndpoint = "/api/trackers"
 	resolveParam     = "u"
 
+	// accessLoginOrigin は Cloudflare Access のログイン画面。
+	//
+	// このサービスを Access の内側に置くと、セッション切れのリクエストは
+	// ここへリダイレクトされる。CSP はリダイレクト先も検査するため、
+	// 許可しておかないと再認証が始まらずページが動かなくなる。
+	accessLoginOrigin = "https://*.cloudflareaccess.com"
+
 	// uiCSP は共有 UI に付与する Content-Security-Policy。
-	// スクリプトとスタイルは同一オリジンの静的ファイルだけを許可する。
-	uiCSP = "default-src 'none'; script-src 'self'; style-src 'self'; " +
-		"img-src 'self'; manifest-src 'self'; connect-src 'self'; " +
-		"form-action 'self'; base-uri 'none'"
+	// スクリプトは同一オリジンの静的ファイルだけを許可する。
+	uiCSP = "default-src 'none'; " +
+		"script-src 'self'; " +
+		"img-src 'self'; " +
+		"base-uri 'none'; " +
+		"style-src 'self' " + accessLoginOrigin + "; " +
+		"manifest-src 'self' " + accessLoginOrigin + "; " +
+		"connect-src 'self' " + accessLoginOrigin + "; " +
+		"form-action 'self' " + accessLoginOrigin
 
 	envListenAddr      = "LISTEN_ADDR"
 	envUpstreamHostMap = "UPSTREAM_HOST_MAP"

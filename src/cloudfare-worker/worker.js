@@ -28,6 +28,12 @@ const MAX_REDIRECT_HOPS = 8;
 const UPSTREAM_TIMEOUT_MS = 8000;
 const MAX_BODY_BYTES = 64 * 1024;
 
+/**
+ * この文字数以下の本文しか表示しないページを「中継用の空ページ」とみなす。
+ * "Redirecting..." 程度の文言は許容しつつ、通常のページは対象外にする。
+ */
+const MAX_INTERSTITIAL_TEXT_LENGTH = 200;
+
 const LOOP_GUARD_HEADER = "X-Notrack-Redirector";
 const LOOP_GUARD_VALUE = "1";
 
@@ -160,13 +166,39 @@ function isHTMLContentType(value) {
     return String(value || "").toLowerCase().includes("text/html");
 }
 
-/** 本文の先頭だけを読み取る。遷移先の指示はページ冒頭にあるため十分。 */
+/** 本文を読まずに破棄する。 */
+async function discardBody(response) {
+    if (response.body) {
+        await response.body.cancel();
+    }
+}
+
+/**
+ * 本文の先頭だけを読み取る。遷移先の指示はページ冒頭にあるため十分。
+ * 上流の本文は大きさが分からないため、上限まで読んだら残りは破棄する。
+ */
 async function readBodyHead(response) {
     if (!response.body) {
         return "";
     }
-    const buffer = await response.arrayBuffer();
-    return new TextDecoder().decode(buffer.slice(0, MAX_BODY_BYTES));
+
+    const reader = response.body.getReader();
+    const buffer = new Uint8Array(MAX_BODY_BYTES);
+    let size = 0;
+    try {
+        while (size < MAX_BODY_BYTES) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            const part = value.subarray(0, MAX_BODY_BYTES - size);
+            buffer.set(part, size);
+            size += part.length;
+        }
+    } finally {
+        await reader.cancel();
+    }
+    return new TextDecoder().decode(buffer.subarray(0, size));
 }
 
 const META_TAG_PATTERN = /<meta\s[^>]*>/gis;
@@ -177,7 +209,7 @@ const META_ATTR_PATTERN = /([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gis;
  *
  * HTTP リダイレクトではなく <meta http-equiv="refresh"> で遷移させる
  * トラッキングサービスがあるため、それも追跡の対象にする。
- * JavaScript による遷移は誤検出を招くので対象にしない。
+ * JavaScript による遷移は scriptRedirectTarget が条件付きで扱う。
  */
 function metaRefreshTarget(html) {
     for (const [tag] of String(html).matchAll(META_TAG_PATTERN)) {
@@ -217,6 +249,109 @@ function parseRefreshContent(content) {
         target = target.slice(4).trim();
     }
     return target.replace(/^["']|["']$/g, "");
+}
+
+const SCRIPT_BLOCK_PATTERN = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+const SCRIPT_TYPE_PATTERN = /\btype\s*=\s*["']?([^"'\s>]+)/i;
+const SCRIPT_SRC_PATTERN = /\bsrc\s*=/i;
+const NON_VISIBLE_BLOCK_PATTERN = /<(script|style|noscript|template)\b[\s\S]*?<\/\1\s*>/gi;
+
+/**
+ * location への文字列リテラルの代入、または location.replace / assign の呼び出し。
+ * 例: location.href = "...", window.location = '...', top.location.replace("...")
+ * 文字列の連結や変数など、宛先が静的に確定しないものは対象外。
+ */
+const SCRIPT_REDIRECT_PATTERN = new RegExp(
+    String.raw`(?:^|[^\w$.])(?:(?:window|self|top|parent|document)\s*\.\s*)?location` +
+        String.raw`(?:(?:\s*\.\s*href)?\s*=(?!=)|\s*\.\s*(?:replace|assign)\s*\()` +
+        String.raw`\s*(["'])((?:\\.|(?!\1)[^\\\r\n])*)\1(?!\s*[+.[])`,
+);
+
+/** JavaScript の文字列リテラルのエスケープ (\/ \u0026 \x26 など) を戻す。 */
+function unescapeScriptString(value) {
+    return value.replace(
+        /\\(?:u\{([0-9a-f]+)\}|u([0-9a-f]{4})|x([0-9a-f]{2})|([\s\S]))/gi,
+        (_, codePoint, unicode, hex, char) => {
+            const code = codePoint || unicode || hex;
+            return code ? String.fromCodePoint(parseInt(code, 16)) : char;
+        },
+    );
+}
+
+/** ページが利用者に見せる本文の文字数を返す。 */
+function visibleTextLength(html) {
+    return html
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(NON_VISIBLE_BLOCK_PATTERN, " ")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim().length;
+}
+
+/** インラインで実行される JavaScript の script 要素かを判定する。 */
+function isInlineJavaScript(attributes) {
+    if (SCRIPT_SRC_PATTERN.test(attributes)) {
+        return false;
+    }
+    const type = (attributes.match(SCRIPT_TYPE_PATTERN) || [])[1];
+    return !type || /javascript|ecmascript|^module$/i.test(type);
+}
+
+/**
+ * 本文を持たず JavaScript で即座に遷移させる中継ページの遷移先を返す。
+ *
+ * スクリプトから宛先を推測すると誤検出を招くため、次をすべて満たす場合だけ
+ * 遷移とみなす。
+ *   - 表示される本文がほとんどない (通常のページではない)
+ *   - インラインの script 要素内で location に文字列リテラルを渡している
+ */
+function scriptRedirectTarget(html) {
+    const source = String(html);
+    if (visibleTextLength(source) > MAX_INTERSTITIAL_TEXT_LENGTH) {
+        return "";
+    }
+
+    for (const [, attributes, body] of source.matchAll(SCRIPT_BLOCK_PATTERN)) {
+        if (!isInlineJavaScript(attributes)) {
+            continue;
+        }
+        const match = body.match(SCRIPT_REDIRECT_PATTERN);
+        if (match) {
+            const target = unescapeScriptString(match[2]).trim();
+            if (target) {
+                return target;
+            }
+        }
+    }
+    return "";
+}
+
+/**
+ * HTTP リダイレクト以外の応答から遷移先を探す。
+ *
+ * 200 を返しつつ実際には別ページへ送る中継ページがあるため、次の順に調べる。
+ *   1. Refresh ヘッダ (本文が空の応答で使われる)
+ *   2. <meta http-equiv="refresh">
+ *   3. 中身のない成功応答ページの JavaScript による遷移
+ */
+async function documentRedirectTarget(response) {
+    const refresh = parseRefreshContent(response.headers.get("Refresh") || "");
+    if (refresh || !isHTMLContentType(response.headers.get("Content-Type"))) {
+        await discardBody(response);
+        return refresh;
+    }
+
+    const html = await readBodyHead(response);
+    return metaRefreshTarget(html) || (response.ok ? scriptRedirectTarget(html) : "");
+}
+
+/** フラグメントを除いて同じページを指すかを判定する。 */
+function isSameDocument(a, b) {
+    const left = new URL(a.toString());
+    const right = new URL(b.toString());
+    left.hash = "";
+    right.hash = "";
+    return left.toString() === right.toString();
 }
 
 /** リダイレクト先として許容できる URL かを検証する。 */
@@ -303,12 +438,11 @@ async function resolveDestination(target, hostMap) {
         let location = response.headers.get("Location");
         const redirected = status >= 300 && status <= 399 && Boolean(location);
 
-        // HTTP リダイレクトでない場合だけ、HTML による遷移指示を探すために
-        // 本文の先頭を読む。
-        if (!redirected && isHTMLContentType(response.headers.get("Content-Type"))) {
-            location = metaRefreshTarget(await readBodyHead(response));
-        } else if (response.body) {
-            await response.body.cancel();
+        // HTTP リダイレクトでない場合だけ、Refresh ヘッダや本文による遷移指示を探す。
+        if (redirected) {
+            await discardBody(response);
+        } else {
+            location = await documentRedirectTarget(response);
         }
 
         if (!location) {
@@ -323,6 +457,10 @@ async function resolveDestination(target, hostMap) {
             next = new URL(location, current);
         } catch {
             throw new RedirectorError("invalid redirect target", 502);
+        }
+        if (!redirected && isSameDocument(next, current)) {
+            // 自分自身を再読み込みするだけの refresh は遷移ではない。
+            return { final: current, hops };
         }
         validateHopURL(next);
         hops.push(next);
@@ -601,6 +739,7 @@ export {
     parseTrackerURL,
     parseHostMap,
     resolveDestination,
+    scriptRedirectTarget,
     stripTrackingParams,
     targetURL,
     validateHopURL,

@@ -13,6 +13,7 @@ import {
     isTrackerURL,
     parseHostMap,
     resolveDestination,
+    scriptRedirectTarget,
     stripTrackingParams,
     targetURL,
     validateHopURL,
@@ -114,6 +115,9 @@ function stubFetch(routes) {
         }
         if (route.location) {
             return new Response(null, { status: 302, headers: { Location: route.location } });
+        }
+        if (route.refresh) {
+            return new Response(null, { status: 200, headers: { Refresh: route.refresh } });
         }
         if (route.html) {
             return new Response(route.html, {
@@ -402,6 +406,96 @@ test("resolveDestination は meta refresh の危険な宛先を拒否する", as
     await assert.rejects(() => resolveDestination(new URL("https://tracker.example/mk/cl"), new Map()), {
         status: 403,
     });
+});
+
+test("scriptRedirectTarget は中身のないページの JS 遷移だけを拾う", () => {
+    const cases = [
+        [`<html><head><script>location.href = "https://example.com/a";</script></head><body></body></html>`, "https://example.com/a"],
+        [`<script>window.location.replace('https:\\/\\/example.com\\/b?x=1\\u0026y=2')</script>`, "https://example.com/b?x=1&y=2"],
+        [`<script>setTimeout(function () { top.location = "/c"; }, 0);</script><p>Redirecting...</p>`, "/c"],
+        [`<script type="text/javascript">document.location.assign("https://example.com/d")</script>`, "https://example.com/d"],
+        [`<script>window.location.href="https://example.com/e"</script>`, "https://example.com/e"],
+        // 本文のあるページは通常のページとみなし、スクリプトを根拠にしない。
+        [`<p>${"本文".repeat(300)}</p><script>location.href = "https://example.com/f";</script>`, ""],
+        // 比較や変数代入では宛先を確定できない。
+        [`<script>if (location.href == "https://example.com/g") {}</script>`, ""],
+        [`<script>location.href = next;</script>`, ""],
+        // script 要素の外 (イベントハンドラ) は対象外。
+        [`<a onclick="location.href='https://example.com/h'">go</a>`, ""],
+        [`<script src="/app.js"></script>`, ""],
+        ["", ""],
+    ];
+    for (const [html, want] of cases) {
+        assert.equal(scriptRedirectTarget(html), want, html.slice(0, 60));
+    }
+});
+
+test("resolveDestination は空の 200 応答の Refresh ヘッダを追跡する", async (t) => {
+    const restore = stubFetch({
+        "/click": { refresh: "0; url=https://example.com/landing?utm_source=mail" },
+        "/landing": { status: 200 },
+    });
+    t.after(restore);
+
+    const result = await resolveDestination(new URL("https://tracker.example/click"), new Map());
+    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/landing");
+    assert.deepEqual(hopLabels(result.hops), ["https://example.com/landing"]);
+});
+
+test("resolveDestination は JS で即座に遷移するページを追跡する", async (t) => {
+    const restore = stubFetch({
+        "/click": { html: `<html><body><script>window.location.replace("https://example.com/js?id=1&gclid=x");</script></body></html>` },
+        "/js": { status: 200 },
+    });
+    t.after(restore);
+
+    const result = await resolveDestination(new URL("https://tracker.example/click"), new Map());
+    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/js?id=1");
+    assert.equal(result.hops.length, 1);
+});
+
+test("resolveDestination は JS 遷移の危険な宛先を拒否する", async (t) => {
+    const restore = stubFetch({
+        "/click": { html: `<script>location.href = "http://127.0.0.1/admin";</script>` },
+    });
+    t.after(restore);
+
+    await assert.rejects(() => resolveDestination(new URL("https://tracker.example/click"), new Map()), {
+        status: 403,
+    });
+});
+
+test("resolveDestination は自分自身への refresh を最終地点として扱う", async (t) => {
+    const restore = stubFetch({
+        "/news": { html: `<meta http-equiv="refresh" content="300;url=https://example.com/news">` },
+    });
+    t.after(restore);
+
+    const result = await resolveDestination(new URL("https://example.com/news"), new Map());
+    assert.equal(result.final.toString(), "https://example.com/news");
+    assert.equal(result.hops.length, 0);
+});
+
+test("resolveDestination は本文を上限までしか読まない", async (t) => {
+    const original = globalThis.fetch;
+    let pulled = 0;
+    globalThis.fetch = async () => {
+        const chunk = new TextEncoder().encode("a".repeat(16 * 1024));
+        const body = new ReadableStream({
+            pull(controller) {
+                pulled++;
+                controller.enqueue(chunk);
+            },
+        });
+        return new Response(body, { status: 200, headers: { "Content-Type": "text/html" } });
+    };
+    t.after(() => {
+        globalThis.fetch = original;
+    });
+
+    const result = await resolveDestination(new URL("https://example.com/huge"), new Map());
+    assert.equal(result.hops.length, 0);
+    assert.ok(pulled < 10, `read ${pulled} chunks`);
 });
 
 test("認証プロキシのセッション切れを検出できる", async () => {

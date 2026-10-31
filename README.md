@@ -22,10 +22,16 @@ Two ways to use it:
 2. The service fetches the URL itself and follows the redirect chain, up to 8
    hops, with no cookies and no forwarded headers. Both `Location` headers and
    HTML `<meta http-equiv="refresh">` are followed — several mail trackers
-   (Sendinblue/Brevo among them) redirect only through the page body. Redirects
-   driven purely by JavaScript are not followed, since guessing a destination
-   out of a script would be unreliable. A URL that does not redirect is kept
-   as-is, so pasting an ordinary link still strips its tracking parameters.
+   (Sendinblue/Brevo among them) redirect only through the page body. The
+   Cloudflare Worker additionally follows pages that answer `200` but forward
+   right away: a `Refresh` response header (typically on an empty body), and
+   JavaScript redirects (`location.href = "..."`, `location.replace("...")`,
+   etc.) with a literal URL in an inline `<script>`. JavaScript redirects are
+   only trusted on interstitial pages with almost no visible text, since
+   guessing a destination out of a script on an ordinary page would be
+   unreliable. A refresh that only reloads the same page is treated as the
+   final destination. A URL that does not redirect is kept as-is, so pasting
+   an ordinary link still strips its tracking parameters.
 3. Tracking parameters (`utm_*`, `gclid`, Amazon `tag`, Rakuten `scid`, ...) are
    removed from the resolved URL.
 4. The cleaned URL is shown on the top page, returned as JSON, or sent as a

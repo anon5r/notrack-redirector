@@ -97,6 +97,13 @@ test("stripParams は既定でトラッキングとアフィリエイトの両�
         ],
         ["https://www.temu.com/g.html?goods_id=1&sku_id=2&_x_ads_channel=g&refer_share_id=a", "https://www.temu.com/g.html?goods_id=1&sku_id=2"],
         ["https://shop.example/p?id=1&irclickid=z&aff_sub=1&cjevent=c", "https://shop.example/p?id=1"],
+        // 許可リストの ASP が広告主の LP に付けるクリック識別子。
+        ["https://shop.example/lp?id=1&a8=x&vc_lpp=y&abm=z&rd_code=w&ranMID=1", "https://shop.example/lp?id=1"],
+        // もしもアフィリエイト経由の Amazon は Amazon のアソシエイトタグになる。
+        [
+            "https://www.amazon.co.jp/dp/4167158043?tag=maftracking178367-22&linkCode=ure&creative=6339",
+            "https://www.amazon.co.jp/dp/4167158043",
+        ],
         ["https://www.booking.com/hotel/jp/x.html?aid=123&label=blog", "https://www.booking.com/hotel/jp/x.html"],
         ["https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1", "https://store.shopping.yahoo.co.jp/s/i.html"],
         // ホスト固有パラメータは他ホストでは消さない。
@@ -139,6 +146,7 @@ test("stripParams はアフィリエイトを残してトラッキングだけ�
             "https://shop.example/p?id=1&irclickid=z&utm_source=x&aff_sub=1",
             "https://shop.example/p?id=1&irclickid=z&aff_sub=1",
         ],
+        ["https://shop.example/lp?abm=z&rd_code=w&gclid=g", "https://shop.example/lp?abm=z&rd_code=w"],
         ["https://www.booking.com/hotel/jp/x.html?aid=123&label=blog", "https://www.booking.com/hotel/jp/x.html?aid=123&label=blog"],
         // Yahoo の sc_e はバリューコマース経由 (afvc) のときだけ残す。
         ["https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1&sc_i=x", "https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1"],

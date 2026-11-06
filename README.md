@@ -133,7 +133,8 @@ page (stored per device) or with the strip options above.
 
 **Affiliate** — codes that credit whoever shared the link:
 
-- Global: `aff_*`, A8.net `a8`, ValueCommerce `vc_lpp`, Impact `irclickid` /
+- Global: `aff_*`, A8.net `a8`, ValueCommerce `vc_lpp`, afb `abm`, moshimo
+  `rd_code`, Impact `irclickid` /
   `irgwc`, CJ `cjevent`, Awin `awc`, ShareASale `sscid`, Rakuten Advertising
   `ranMID` / `ranEAID` / `ranSiteID`, Admitad `admitad_uid`, Tradedoubler
   `tduid`.

@@ -134,8 +134,11 @@ export default {
         // HasOffers / TUNE (aff_id, aff_sub*) や AliExpress (aff_fcid, aff_fsk ...) など。
         prefixes: ["aff_"],
         names: [
+            // 許可リストの ASP が広告主の LP に付けるクリック識別子。
             "a8", // A8.net
-            "vc_lpp", // ValueCommerce
+            "vc_lpp", // ValueCommerce (ITP 対応の案内で「弊社が付与するパラメータ」と明記)
+            "abm", // afb (afb のソケット通信導入資料に「URL に abm=... を付与」と明記)
+            "rd_code", // もしもアフィリエイトのセッション方式 (広告主がリンク先に ?rd_code={{CODE}} を設定)
             "irclickid", "irgwc", // Impact
             "cjevent", // CJ
             "awc", // Awin

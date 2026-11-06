@@ -93,6 +93,10 @@ function compileParamRules(category) {
             param: marker.param.toLowerCase(),
             pattern: new RegExp(marker.pattern, "i"),
         })),
+        keepOnly: (category.keepOnly || []).map((entry) => ({
+            ...compileHost(entry),
+            exceptPaths: (entry.exceptPaths || []).map((pattern) => new RegExp(pattern, "i")),
+        })),
     };
 }
 
@@ -530,8 +534,9 @@ function stripParams(url, options = DEFAULT_STRIP_OPTIONS) {
     }
 
     const marked = markedAffiliateRules(host, clean.searchParams);
+    const keep = keepOnlyRule(host, url.pathname);
     for (const name of [...clean.searchParams.keys()]) {
-        const kind = paramKind(host, name, marked);
+        const kind = paramKind(host, name, marked, keep);
         if ((kind === "affiliate" && options.affiliate) || (kind === "tracking" && options.tracking)) {
             clean.searchParams.delete(name);
         }
@@ -567,13 +572,33 @@ function markedAffiliateRules(host, searchParams) {
     );
 }
 
-/** パラメータを "affiliate" / "tracking" / "" (除去対象外) に分類する。 */
-function paramKind(host, name, markedRules) {
+/**
+ * 残すパラメータを列挙したルールのうち、このページに当てはまるものを返す。
+ * 対象外のパス (ログインなど) では null を返す。
+ */
+function keepOnlyRule(host, pathname) {
+    const rule = TRACKING_RULES.keepOnly.find((entry) => matchesAnyHost(host, entry.suffixes));
+    if (!rule || rule.exceptPaths.some((pattern) => pattern.test(pathname))) {
+        return null;
+    }
+    return rule;
+}
+
+/**
+ * パラメータを "affiliate" / "tracking" / "" (除去対象外) に分類する。
+ * keep が指定されていれば、そこで残すものとして挙げていないパラメータは
+ * 計測用として扱う。
+ */
+function paramKind(host, name, markedRules, keep) {
     const lower = name.toLowerCase();
     if (matchesCategory(host, lower, AFFILIATE_RULES) || markedRules.some((rule) => matchesNames(lower, rule))) {
         return "affiliate";
     }
     if (matchesCategory(host, lower, TRACKING_RULES)) {
+        return "tracking";
+    }
+    // work_type[0] のような配列形式は添字を除いて比較する。
+    if (keep && !matchesNames(lower.replace(/\[[^\]]*\]$/, ""), keep)) {
         return "tracking";
     }
     return "";

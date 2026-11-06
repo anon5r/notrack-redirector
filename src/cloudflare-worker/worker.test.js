@@ -169,6 +169,62 @@ test("stripParams はトラッキングを残してアフィリエイトだけ�
     }
 });
 
+test("stripParams は対象サイトで機能に不要なパラメータをすべて除去する", () => {
+    const cases = [
+        [
+            "https://www.amazon.co.jp/s?k=foo&i=aps&crid=x&sprefix=y&unknown_x=1&s=price-asc-rank",
+            "https://www.amazon.co.jp/s?k=foo&i=aps&s=price-asc-rank",
+        ],
+        ["https://www.amazon.co.jp/dp/B0000?smid=A1&foo=bar&tag=x-22", "https://www.amazon.co.jp/dp/B0000?smid=A1"],
+        [
+            "https://www.amazon.co.jp/gp/aws/cart/add.html?ASIN.1=B0000&Quantity.1=1&foo=1",
+            "https://www.amazon.co.jp/gp/aws/cart/add.html?ASIN.1=B0000&Quantity.1=1",
+        ],
+        // ログインなどパラメータが必須のページは対象外。
+        [
+            "https://www.amazon.co.jp/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.co.jp%2F&foo=1",
+            "https://www.amazon.co.jp/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.co.jp%2F&foo=1",
+        ],
+        [
+            "https://item.rakuten.co.jp/shop/item/?variantId=r-sku1&gad_source=1&xyz=1",
+            "https://item.rakuten.co.jp/shop/item/?variantId=r-sku1",
+        ],
+        [
+            "https://search.rakuten.co.jp/search/mall/foo/?p=2&s=2&unknown=1",
+            "https://search.rakuten.co.jp/search/mall/foo/?p=2&s=2",
+        ],
+        ["https://www.temu.com/g.html?goods_id=1&sku_id=2&thumb_url=x&pic_w=1", "https://www.temu.com/g.html?goods_id=1&sku_id=2"],
+        [
+            "https://www.dlsite.com/maniax/fsr/=/?keyword=a&work_type%5B0%5D=SOU&unknown=1",
+            "https://www.dlsite.com/maniax/fsr/=/?keyword=a&work_type%5B0%5D=SOU",
+        ],
+        ["https://www.dmm.co.jp/search/?searchstr=a&foo=1", "https://www.dmm.co.jp/search/?searchstr=a"],
+        // 年齢確認は戻り先 (rurl) が必須。
+        [
+            "https://www.dmm.co.jp/age_check/=/?rurl=https%3A%2F%2Fwww.dmm.co.jp%2F&foo=1",
+            "https://www.dmm.co.jp/age_check/=/?rurl=https%3A%2F%2Fwww.dmm.co.jp%2F&foo=1",
+        ],
+        // 対象外のサイトでは未知のパラメータを残す。
+        ["https://shop.example/p?foo=1&id=2", "https://shop.example/p?foo=1&id=2"],
+    ];
+    for (const [raw, want] of cases) {
+        assert.equal(stripParams(new URL(raw)).toString(), want, raw);
+    }
+});
+
+test("stripParams は機能に不要なパラメータを除去してもアフィリエイトを残せる", () => {
+    const options = { tracking: true, affiliate: false };
+    assert.equal(
+        stripParams(new URL("https://www.amazon.co.jp/dp/B0000?foo=bar&tag=x-22&linkCode=ogi"), options).toString(),
+        "https://www.amazon.co.jp/dp/B0000?tag=x-22&linkCode=ogi",
+    );
+    // トラッキングの除去を無効にすると未知のパラメータも残る。
+    assert.equal(
+        stripParams(new URL("https://www.amazon.co.jp/dp/B0000?foo=bar&tag=x-22"), { tracking: false, affiliate: true }).toString(),
+        "https://www.amazon.co.jp/dp/B0000?foo=bar",
+    );
+});
+
 test("stripParams は両方を無効にすると URL を変えない", () => {
     const raw = "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x";
     assert.equal(stripParams(new URL(raw), { tracking: false, affiliate: false }).toString(), raw);

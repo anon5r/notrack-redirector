@@ -128,6 +128,95 @@ export default {
             { suffixes: ["youtu.be"], names: ["si", "feature"] },
             { suffixes: ["x.com", "twitter.com"], names: ["s", "t", "ref_src", "ref_url"] },
         ],
+
+        /*
+         * 残すパラメータを列挙するサイト。ここに挙げたホストでは、names /
+         * prefixes に当てはまらないパラメータをすべて計測用として除去する。
+         * 遷移先の表示や機能に不要なものは計測かアフィリエイトとみなす方針。
+         *
+         *   names / prefixes  残すパラメータ (小文字)。名前末尾の配列添字
+         *                     (work_type[0] など) は比較前に取り除く。
+         *   exceptPaths       対象外にするパスの正規表現。ログインや購入手続き
+         *                     のようにパラメータが必須のページを除く。
+         *
+         * アフィリエイトの判定が先に行われるため、アフィリエイトを残す指定なら
+         * ここで残さないものでも tag などは残る。
+         */
+        keepOnly: [
+            {
+                suffixes: AMAZON,
+                names: [
+                    // 検索結果・カテゴリ
+                    "k", "i", "rh", "s", "page", "bbn", "node", "emi", "pct-off",
+                    "low-price", "high-price", "field-keywords", "field-author",
+                    "field-isbn", "field-publisher", "field-title", "url",
+                    // 商品詳細 (出品者の指定、全出品者一覧の展開)
+                    "smid", "m", "aod", "condition",
+                    // 出品者ストア
+                    "me", "seller", "marketplaceid",
+                    // レビュー一覧
+                    "filterbystar", "sortby", "pagenumber", "reviewertype", "formattype",
+                    "mediatype", "filterbykeyword", "filterbylanguage",
+                    // ほしい物リスト
+                    "filter", "sort", "viewtype", "lek",
+                    // 全ページ共通
+                    "language", "currency", "ie",
+                ],
+                // カート追加リンク (ASIN.1=...&Quantity.1=...)
+                prefixes: ["asin.", "quantity.", "offerlistingid."],
+                exceptPaths: [
+                    "^/ap/", "^/gp/buy/", "^/gp/cart/", "^/cart/", "^/checkout/",
+                    "^/gp/css/", "^/gp/your-account/", "^/your-account/",
+                ],
+            },
+            {
+                suffixes: [
+                    "item.rakuten.co.jp", "search.rakuten.co.jp", "www.rakuten.co.jp",
+                    "books.rakuten.co.jp", "review.rakuten.co.jp",
+                ],
+                names: [
+                    // 商品詳細のバリエーション
+                    "variantid",
+                    // 検索結果・店舗内カテゴリ
+                    "p", "s", "min", "max", "f", "filter", "nitem", "v", "sid", "st", "k",
+                    // 楽天ブックスの検索
+                    "sitem", "keyword", "g", "spv", "author", "isbn", "pname",
+                ],
+            },
+            {
+                suffixes: ["temu.com"],
+                names: [
+                    "goods_id", "sku_id", "search_key", "filter_items", "sort", "sort_type",
+                    "page", "opt_id", "opt_type", "cat_id", "mall_id",
+                    "bgt_order_type", "parent_order_sn",
+                ],
+                exceptPaths: ["^/login"],
+            },
+            {
+                // dmm.com 配下には FX など別サービスもあるため、ホストを限定する。
+                suffixes: ["www.dmm.co.jp", "www.dmm.com", "book.dmm.com", "book.dmm.co.jp", "video.dmm.co.jp"],
+                names: [
+                    "cid", "searchstr", "sort", "page", "limit", "view", "floor", "service",
+                    "article", "id", "term", "type", "category", "genre", "publisher",
+                    "author", "series", "sale", "keyword", "q",
+                ],
+                // 年齢確認は戻り先 (rurl) が必須。
+                exceptPaths: ["^/age_check/", "^/my/"],
+            },
+            {
+                suffixes: ["www.dlsite.com"],
+                names: [
+                    "locale", "translation", "product_id", "maker_id",
+                    // 検索結果 (/fsr/=/)
+                    "keyword", "keyword_creater", "work_type", "type", "work_category",
+                    "sex_category", "age_category", "genre", "options", "options_not",
+                    "language", "price_low", "price_high", "price_category", "rate_average",
+                    "release_term", "order", "per_page", "page", "show_type", "is_tl", "from_fsr",
+                    // ランキング・レビュー・お気に入り
+                    "term", "sort", "sub", "date", "filter",
+                ],
+            },
+        ],
     },
 
     affiliate: {

@@ -131,6 +131,13 @@ page (stored per device) or with the strip options above.
   `_p_*`, `_oak_*`, `refer_page_*`, ...), DMM (`dmmref`, `i3_ref`, `i3_ord`),
   AliExpress, eBay, Apple, Yahoo, YouTube, X/Twitter.
 
+- Everything a page does not need, on Amazon, Rakuten Ichiba / Books, Temu,
+  DMM / FANZA and DLsite. For these sites `keepOnly` lists the parameters
+  that pages actually use (search terms, filters, sort order, page number,
+  variant, seller, language, ...); any other parameter counts as tracking.
+  Pages that require their parameters — sign-in, cart, checkout, DMM's age
+  check — are excluded by `exceptPaths`.
+
 **Affiliate** — codes that credit whoever shared the link:
 
 - Global: `aff_*`, A8.net `a8`, ValueCommerce `vc_lpp`, afb `abm`, moshimo
@@ -150,7 +157,9 @@ page (stored per device) or with the strip options above.
   on Yahoo! Shopping so is `sc_e` starting with `afvc` (ValueCommerce).
 
 A parameter that matches both kinds counts as affiliate, so keeping affiliate
-codes keeps it even while tracking parameters are stripped.
+codes keeps it even while tracking parameters are stripped. That also holds
+on `keepOnly` sites: Amazon's `tag` and `linkCode` stay when affiliate codes
+are kept, although they are not on the list of parameters pages need.
 
 The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules) and the
 [AdGuard URL Tracking filter](https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter),

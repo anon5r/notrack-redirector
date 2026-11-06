@@ -386,7 +386,7 @@ func TestServesStaticUI(t *testing.T) {
 	}
 
 	index := doRequest(t, client, "/").Body.String()
-	for _, want := range []string{`name="u"`, "notrack-redirector", "/app.js", "/manifest.webmanifest"} {
+	for _, want := range []string{`name="u"`, "Anti Tracker", "/app.js", "/manifest.webmanifest"} {
 		if !strings.Contains(index, want) {
 			t.Errorf("index.html does not contain %q", want)
 		}

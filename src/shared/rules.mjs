@@ -1,6 +1,6 @@
 /**
  * Anti-Tracking URL Redirector のルール定義。
- * Cloudflare Worker 実装 (src/cloudfare-worker/worker.js) が読み込む。
+ * Cloudflare Worker 実装 (src/cloudflare-worker/worker.js) が読み込む。
  *
  * パラメータ除去ルールの出典は、特に断りがなければ次の 2 つ。
  *   - ClearURLs: https://rules2.clearurls.xyz/data.minify.json

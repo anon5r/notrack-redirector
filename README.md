@@ -215,8 +215,8 @@ blocked. Allowlist the service's hostname in the blocker if that happens.
 # Test
 
 ```shell
-$ npm --prefix src/cloudfare-worker install
-$ npm --prefix src/cloudfare-worker test
+$ npm --prefix src/cloudflare-worker install
+$ npm --prefix src/cloudflare-worker test
 ```
 
 The tests run on Node's built-in test runner and stub `fetch`, so they need no
@@ -226,7 +226,7 @@ network access.
 # Deploy (Cloudflare Workers)
 
 ```shell
-$ cd src/cloudfare-worker
+$ cd src/cloudflare-worker
 $ CLOUDFLARE_ACCOUNT_ID=<account id> npx wrangler deploy
 ```
 
@@ -244,7 +244,7 @@ raw IP addresses, so the override value there must be a hostname.
 # Debug
 
 ```shell
-$ npm --prefix src/cloudfare-worker run dev
+$ npm --prefix src/cloudflare-worker run dev
 ```
 
 Then open <http://localhost:8787/> and paste a tracking URL into the form, or:
@@ -274,9 +274,9 @@ governs the paths that issue a real redirect.
 # Layout
 
 ```
-src/cloudfare-worker/worker.js       Cloudflare Worker implementation
-src/cloudfare-worker/worker.test.js
-src/cloudfare-worker/wrangler.jsonc
+src/cloudflare-worker/worker.js       Cloudflare Worker implementation
+src/cloudflare-worker/worker.test.js
+src/cloudflare-worker/wrangler.jsonc
 src/shared/rules.mjs                 302 allowlist and parameters to strip
 src/shared/ui/                       Static page (index.html, style.css,
                                      app.js, icon.svg, manifest.webmanifest)

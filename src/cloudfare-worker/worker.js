@@ -217,7 +217,7 @@ function metaRefreshTarget(html) {
         let content = "";
 
         for (const [, name, rawValue] of tag.matchAll(META_ATTR_PATTERN)) {
-            const value = rawValue.replace(/^["']|["']$/g, "");
+            const value = decodeHTMLEntities(rawValue.replace(/^["']|["']$/g, ""));
             if (name.toLowerCase() === "http-equiv") {
                 isRefresh = value.trim().toLowerCase() === "refresh";
             } else if (name.toLowerCase() === "content") {
@@ -233,6 +233,23 @@ function metaRefreshTarget(html) {
         }
     }
     return "";
+}
+
+/** URL に現れうる名前付き文字参照。 */
+const HTML_NAMED_ENTITIES = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">" };
+
+/**
+ * 属性値の文字参照を戻す。URL 中の "&" は "&amp;" と書かれるため、戻さないと
+ * "amp;utm_source" のような別名のパラメータになり除去を逃れる。
+ */
+function decodeHTMLEntities(value) {
+    return value.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/gi, (entity, decimal, hex, name) => {
+        if (decimal || hex) {
+            const code = decimal ? parseInt(decimal, 10) : parseInt(hex, 16);
+            return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+        }
+        return HTML_NAMED_ENTITIES[name.toLowerCase()] ?? entity;
+    });
 }
 
 /**

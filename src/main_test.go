@@ -514,6 +514,12 @@ func TestMetaRefreshTarget(t *testing.T) {
 			body: `<html><body>hello</body></html>`,
 			want: "",
 		},
+		{
+			// 属性値は HTML としてエスケープされているため復号する (DLsite など)。
+			name: "文字参照を含む",
+			body: `<meta http-equiv="refresh" content="0;URL=https://example.com/w?a=1&amp;b=2&#38;c=3&#x26;d=4">`,
+			want: "https://example.com/w?a=1&b=2&c=3&d=4",
+		},
 	}
 
 	for _, c := range cases {

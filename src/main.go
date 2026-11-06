@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -582,7 +583,9 @@ func metaRefreshTarget(body []byte) string {
 
 		for _, attr := range metaAttrPattern.FindAllSubmatch(tag, -1) {
 			name := strings.ToLower(string(attr[1]))
-			value := strings.Trim(string(attr[2]), `"'`)
+			// URL 中の "&" は "&amp;" と書かれるため、戻さないと
+			// "amp;utm_source" のような別名のパラメータになり除去を逃れる。
+			value := html.UnescapeString(strings.Trim(string(attr[2]), `"'`))
 
 			switch name {
 			case "http-equiv":

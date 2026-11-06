@@ -375,6 +375,11 @@ test("metaRefreshTarget", () => {
         [`<meta name="description" content="0;url=https://evil.example/">`, ""],
         [`<script>top.location='https://example.com/js'</script>`, ""],
         [`<html><body>hello</body></html>`, ""],
+        // 属性値は HTML としてエスケープされているため復号する (DLsite など)。
+        [
+            `<meta http-equiv="refresh" content="0;URL=https://example.com/w?a=1&amp;b=2&#38;c=3&#x26;d=4">`,
+            "https://example.com/w?a=1&b=2&c=3&d=4",
+        ],
     ];
     for (const [html, want] of cases) {
         assert.equal(metaRefreshTarget(html), want, html.slice(0, 60));

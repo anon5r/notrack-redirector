@@ -21,7 +21,8 @@ Two ways to use it:
    at a loopback, private, CGNAT or link-local address.
 2. The service fetches the URL itself and follows the redirect chain, up to 8
    hops, with no cookies and no forwarded headers. Both `Location` headers and
-   HTML `<meta http-equiv="refresh">` are followed — several mail trackers
+   HTML `<meta http-equiv="refresh">` (with character references such as `&amp;`
+   decoded) are followed — several mail trackers
    (Sendinblue/Brevo among them) redirect only through the page body. The
    Cloudflare Worker additionally follows pages that answer `200` but forward
    right away: a `Refresh` response header (typically on an empty body), and

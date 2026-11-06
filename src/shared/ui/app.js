@@ -1,8 +1,7 @@
 // notrack-redirector のフロントエンド。
 //
 // 画面はサーバー側でレンダリングせず、/api/resolve の結果を描画するだけに
-// している。これにより Go 実装と Cloudflare Worker 実装が同じ静的ファイルを
-// そのまま配信でき、ページの記述が一箇所で済む。
+// している。Worker は静的アセットとしてそのまま配信する。
 //
 // 生成した要素には textContent と setAttribute だけを使い、innerHTML は
 // 使用しない。

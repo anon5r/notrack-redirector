@@ -1,5 +1,5 @@
 {
-  "//": "Anti-Tracking URL Redirector の共有ルール定義。Go 実装 (src/main.go) と Cloudflare Worker 実装 (src/cloudfare-worker/worker.js) の双方がこのファイルを読み込む。",
+  "//": "Anti-Tracking URL Redirector の共有ルール定義。Cloudflare Worker 実装 (src/cloudfare-worker/worker.js) が読み込む。",
 
   "//trackers": "上流として接続を許可するトラッキングサービス。誰でも任意の URL を登録できる短縮 URL サービス (t.co, bit.ly など) を追加してはならない。追加するとオープンリダイレクタ化する。paths が空なら当該ホストの全パスを許可する。正規表現は Go と JavaScript の双方で解釈できる構文に限る。",
   "trackers": [

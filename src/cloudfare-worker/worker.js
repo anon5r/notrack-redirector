@@ -18,8 +18,7 @@
  * リダイレクトせず解決結果の URL を表示するだけなので、遷移先にこのサービスの
  * URL が Referer として残らない。
  *
- * src/main.go と同じポリシーを実装している。allowlist とトラッキング
- * パラメータの定義は src/shared/rules.json で共有している。
+ * allowlist と除去するパラメータの定義は src/shared/rules.json にある。
  */
 
 import rules from "../shared/rules.json" with { type: "json" };
@@ -52,7 +51,7 @@ const RESOLVE_PARAM = "u";
 const ACCESS_LOGIN_ORIGIN = "https://*.cloudflareaccess.com";
 
 /**
- * 共有 UI に付与する Content-Security-Policy。
+ * UI に付与する Content-Security-Policy。
  * スクリプトは同一オリジンの静的ファイルだけを許可する。
  */
 const UI_CSP =
@@ -66,8 +65,7 @@ const UI_CSP =
     `form-action 'self' ${ACCESS_LOGIN_ORIGIN}`;
 
 /**
- * 共有ルール定義。Go 実装 (src/main.go) も同じファイルを読み込む。
- * ルールを変更する場合は src/shared/rules.json だけを編集すればよい。
+ * ルール定義。ルールを変更する場合は src/shared/rules.json だけを編集すればよい。
  */
 const TRACKER_RULES = rules.trackers.map((tracker) => ({
     host: tracker.host.toLowerCase(),
@@ -696,7 +694,7 @@ async function lookup(raw, hostMap) {
 }
 
 /**
- * 共有 UI (src/shared/ui) を配信する。Go 実装も同じファイルを配信する。
+ * UI (src/shared/ui) を配信する。
  * ヘッダはここで付与するため、_headers に依存しない。
  */
 async function serveAsset(request, env) {

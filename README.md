@@ -2,7 +2,8 @@ Anti-Tracking URL Redirector
 ====
 
 Resolves affiliate / tracking redirect URLs **on the server side** and returns
-the final destination with tracking parameters stripped off.
+the final destination with tracking parameters and affiliate codes stripped
+off. It runs on [Cloudflare Workers](https://developers.cloudflare.com/workers/).
 
 Two ways to use it:
 
@@ -22,11 +23,10 @@ Two ways to use it:
 2. The service fetches the URL itself and follows the redirect chain, up to 8
    hops, with no cookies and no forwarded headers. Both `Location` headers and
    HTML `<meta http-equiv="refresh">` (with character references such as `&amp;`
-   decoded) are followed — several mail trackers
-   (Sendinblue/Brevo among them) redirect only through the page body. The
-   Cloudflare Worker additionally follows pages that answer `200` but forward
-   right away: a `Refresh` response header (typically on an empty body), and
-   JavaScript redirects (`location.href = "..."`, `location.replace("...")`,
+   decoded) are followed — several mail trackers (Sendinblue/Brevo among them)
+   redirect only through the page body. Pages that answer `200` but forward
+   right away are followed too: a `Refresh` response header (typically on an
+   empty body), and JavaScript redirects (`location.href = "..."`, `location.replace("...")`,
    etc.) with a literal URL in an inline `<script>`. JavaScript redirects are
    only trusted on interstitial pages with almost no visible text, since
    guessing a destination out of a script on an ordinary page would be
@@ -50,18 +50,17 @@ tracking URLs that carry no destination URL in their parameters at all.
 **The page never redirects and the server never returns a `302` for an
 arbitrary host.** That is what keeps this from becoming an open redirector: you
 cannot send someone a link to this service that lands them on a site of your
-choosing. Two rules preserve that:
+choosing. These rules preserve that:
 
 - The `302` paths (`/-/resolve` and the DNS-transition path) stay restricted to
-  the hosts in `src/shared/rules.json`. **Never add a URL shortener** (`t.co`,
+  the `trackers` in `src/shared/rules.json`. **Never add a URL shortener** (`t.co`,
   `bit.ly`, ...) to that list: anyone can register an arbitrary destination
   there, which would turn those paths into an open redirector.
 - "Open automatically" is stored per device in `localStorage` and **cannot be
   switched on through a URL parameter**, so a crafted link cannot make someone
   else's browser follow it. A test asserts this.
 - Redirect hops pointing at loopback, private, CGNAT, link-local or `.local`
-  addresses are rejected (SSRF protection). In the Go build this is enforced at
-  dial time against the resolved IP as well.
+  addresses are rejected (SSRF protection).
 - A `X-Notrack-Redirector: 1` header is attached to upstream requests. If the
   service receives a request carrying it, it answers `508 Loop Detected` instead
   of looping forever.
@@ -110,13 +109,10 @@ history entry and — because the page itself is `no-referrer` — sends no
 
 | Variable | Description |
 | -------- | ----------- |
-| `LISTEN_ADDR` | Listen address for the Go build. Default `:9000`. |
-| `UPSTREAM_HOST_MAP` | `host=addr[,host=addr]`. Overrides where an upstream host is actually contacted (`203.0.113.10` or `203.0.113.10:8080`). Required when DNS for the tracking host points back at this service, otherwise the upstream fetch loops onto itself. |
-| `ALLOW_PRIVATE_UPSTREAM` | Go only. `1` disables the private-address dial guard. Use for local testing only. |
+| `UPSTREAM_HOST_MAP` | `host=origin[,host=origin]`. Overrides where an upstream host is actually contacted. Required when the tracking hostname is routed to this Worker, otherwise the upstream fetch loops onto itself. The override is a hostname (optionally `host:port`), since Workers cannot dial raw IP addresses. |
 
-The Cloudflare Worker reads `UPSTREAM_HOST_MAP` from its environment bindings;
-there the override value is a hostname (optionally `host:port`), since Workers
-cannot dial raw IP addresses.
+It is read from the Worker's environment bindings (`vars` in `wrangler.jsonc`,
+or a secret).
 
 
 # What gets stripped
@@ -159,22 +155,20 @@ The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules) and the
 [AdGuard URL Tracking filter](https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter),
 plus the actual redirect chains of DMM and DLsite affiliate links.
 
-All of these lists live in `src/shared/rules.json`, which both implementations
-read: the Go build embeds it with `go:embed`, the Worker imports it at bundle
-time. Edit that one file to change a rule.
+All of these lists, together with the `302` allowlist, live in
+`src/shared/rules.json`. The Worker imports it and wrangler bundles it in at
+deploy time. Edit that one file to change a rule.
 
-Path patterns in it (the allowlist `paths`, the host rules' `pathPatterns` and
-the markers' `pattern`) are regular expressions, so they must be valid in
-**both** Go's `regexp` and JavaScript's `RegExp`. `pathPatterns` and `pattern`
-are matched case-insensitively.
+The allowlist `paths`, the host rules' `pathPatterns` and the markers'
+`pattern` are written as strings and compiled with `RegExp`. `pathPatterns` and
+`pattern` are matched case-insensitively.
 
 
-# Shared UI
+# UI
 
 The page is a static site in `src/shared/ui` (`index.html`, `style.css`,
-`app.js`) rather than server-rendered markup, so both implementations serve the
-same files: the Go build embeds the directory with `go:embed`, the Worker
-publishes it through [static assets](https://developers.cloudflare.com/workers/static-assets/).
+`app.js`) rather than server-rendered markup. The Worker publishes it through
+[static assets](https://developers.cloudflare.com/workers/static-assets/).
 
 The page renders nothing server-side — it calls `/api/resolve` and builds the
 result with `textContent` and `setAttribute`, never `innerHTML`. Error wording
@@ -188,7 +182,7 @@ zoom on focus), a **paste and resolve** button, and a web app manifest with a
 the system share sheet. Shared text often arrives as "title + URL", so the first
 `http(s)` URL is extracted from it.
 
-Both implementations attach the same headers to those files —
+The Worker attaches these headers to those files —
 `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and a CSP of
 `default-src 'none'` with `script-src` limited to `'self'` and no
 `unsafe-inline`. The Worker uses `run_worker_first` so that it can set them
@@ -216,36 +210,15 @@ If a content blocker rewrites the page's CSP (AdGuard does this, adding
 blocked. Allowlist the service's hostname in the blocker if that happens.
 
 
-# How to Build
-
-## Go
-
-```shell
-$ go build -o dist/track-redir ./src
-```
-
-## Docker
-
-```shell
-$ docker build -t track-redir:latest -f docker/golang/Dockerfile .
-```
-
-### Running on Docker container
-
-```shell
-$ docker run --rm --name redirgo -p 9090:9000 track-redir
-```
-
-The runtime image is `alpine` with `ca-certificates`, which the upstream HTTPS
-fetch needs.
-
-
 # Test
 
 ```shell
-$ go test ./src
+$ npm --prefix src/cloudfare-worker install
 $ npm --prefix src/cloudfare-worker test
 ```
+
+The tests run on Node's built-in test runner and stub `fetch`, so they need no
+network access.
 
 
 # Deploy (Cloudflare Workers)
@@ -268,26 +241,16 @@ raw IP addresses, so the override value there must be a hostname.
 
 # Debug
 
-## Go
-
-```shell
-$ go run ./src
-```
-
-Then open <http://localhost:9000/> and paste a tracking URL into the form, or:
-
-```shell
-$ curl 'http://localhost:9000/api/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3D...'
-$ curl -i 'http://localhost:9000/-/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3D...'
-```
-
-To exercise the DNS-transition path, point the tracking hostname at `127.0.0.1`
-in `/etc/hosts`.
-
-## Cloudflare Worker
-
 ```shell
 $ npm --prefix src/cloudfare-worker run dev
+```
+
+Then open <http://localhost:8787/> and paste a tracking URL into the form, or:
+
+```shell
+$ curl 'http://localhost:8787/api/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3D...'
+$ curl 'http://localhost:8787/api/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3D...&strip_affiliate=0'
+$ curl -i 'http://localhost:8787/-/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3D...'
 ```
 
 
@@ -309,15 +272,11 @@ governs the paths that issue a real redirect.
 # Layout
 
 ```
-go.mod                          Go module for the Go build
-src/main.go                     Go implementation
-src/main_test.go
-src/shared/rules.json           Allowlist and tracking parameters, shared by both
-src/shared/ui/                  Static page shared by both (index.html,
-                                style.css, app.js, icon.svg,
-                                manifest.webmanifest)
-src/cloudfare-worker/worker.js  Cloudflare Worker implementation
+src/cloudfare-worker/worker.js       Cloudflare Worker implementation
+src/cloudfare-worker/worker.test.js
 src/cloudfare-worker/wrangler.jsonc
-src/lambda/nodejs/main.js       Stub, not implemented
-docker/                         Container build for the Go implementation
+src/shared/rules.json                302 allowlist and parameters to strip
+src/shared/ui/                       Static page (index.html, style.css,
+                                     app.js, icon.svg, manifest.webmanifest)
+src/lambda/nodejs/main.js            Stub, not implemented
 ```

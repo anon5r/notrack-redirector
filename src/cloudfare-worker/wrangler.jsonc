@@ -6,7 +6,7 @@
   "observability": {
     "enabled": true
   },
-  // 共有 UI (Go 実装も同じファイルを配信する) を静的アセットとして配信する。
+  // UI (src/shared/ui) を静的アセットとして配信する。
   // Referrer-Policy と CSP を Worker 側で付与するため、全リクエストを
   // Worker に通してから env.ASSETS へ委譲する。
   "assets": {

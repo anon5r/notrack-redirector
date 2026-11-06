@@ -244,6 +244,30 @@ test("stripParams は AD EBiS の計測パラメータを dmai と一緒のと�
     );
 });
 
+test("stripParams は各アフィリエイトネットワークの ID を除去する", () => {
+    const cases = [
+        // Post Affiliate Pro (a_aid / a_bid)
+        [
+            "https://www.pluginboutique.com/product/2-Effects/18-Amp-Simulator/14354-AmpliTube-MESA-Boogie/?a_aid=5cfc204524b25",
+            "https://www.pluginboutique.com/product/2-Effects/18-Amp-Simulator/14354-AmpliTube-MESA-Boogie/",
+        ],
+        ["https://shop.example/p?id=1&a_aid=x&a_bid=y", "https://shop.example/p?id=1"],
+        ["https://www.bestservice.com/en/total_studio_5_max.html?aid=8YmaiPnNN62p4EFR", "https://www.bestservice.com/en/total_studio_5_max.html"],
+        // aid はありふれた名前なので他ホストでは消さない。
+        ["https://shop.example/p?aid=1", "https://shop.example/p?aid=1"],
+        [
+            "https://shop.example/p?id=1&avad=1&cjdata=2&clickref=3&fpr=4&ps_partner_key=5&ps_xid=6&rfsn=7&sharedid=8&afftrack=9&xcust=10",
+            "https://shop.example/p?id=1",
+        ],
+        // A8.net 経由で広告主の LP に付く a8 (実際のリンクで確認した形)。
+        ["https://store.miroc.co.jp/item/1113272.html?a8=v4ucY4bPL-BGzaQ4Ks", "https://store.miroc.co.jp/item/1113272.html"],
+    ];
+    for (const [raw, want] of cases) {
+        assert.equal(stripParams(new URL(raw)).toString(), want, raw);
+        assert.equal(stripParams(new URL(raw), { tracking: true, affiliate: false }).toString(), raw, raw);
+    }
+});
+
 test("stripParams は両方を無効にすると URL を変えない", () => {
     const raw = "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x";
     assert.equal(stripParams(new URL(raw), { tracking: false, affiliate: false }).toString(), raw);

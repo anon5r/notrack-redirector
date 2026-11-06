@@ -2,10 +2,11 @@
  * Anti-Tracking URL Redirector のルール定義。
  * Cloudflare Worker 実装 (src/cloudflare-worker/worker.js) が読み込む。
  *
- * パラメータ除去ルールの出典は、特に断りがなければ次の 2 つ。
+ * パラメータ除去ルールの出典は、特に断りがなければ次の 3 つ。
  *   - ClearURLs: https://rules2.clearurls.xyz/data.minify.json
  *   - AdGuard URL Tracking filter:
  *     https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter
+ *   - Affiliate Tracking Parameter Reference: https://afterlink.io/parameters
  *
  * 正規表現は文字列で記述し、worker.js 側でコンパイルする。
  */
@@ -239,10 +240,16 @@ export default {
             "vc_lpp", // ValueCommerce (ITP 対応の案内で「弊社が付与するパラメータ」と明記)
             "abm", // afb (afb のソケット通信導入資料に「URL に abm=... を付与」と明記)
             "rd_code", // もしもアフィリエイトのセッション方式 (広告主がリンク先に ?rd_code={{CODE}} を設定)
-            "irclickid", "irgwc", // Impact
-            "cjevent", // CJ
-            "awc", // Awin
-            "sscid", // ShareASale
+            "irclickid", "irgwc", "sharedid", // Impact
+            "cjevent", "cjdata", // CJ
+            "awc", "clickref", // Awin
+            "sscid", "afftrack", // ShareASale
+            "a_aid", "a_bid", // Post Affiliate Pro (Plugin Boutique, sonicwire など)
+            "avad", // AvantLink
+            "fpr", // FirstPromoter
+            "ps_partner_key", "ps_xid", // PartnerStack
+            "rfsn", // Refersion
+            "xcust", // Skimlinks
             "ranmid", "raneaid", "ransiteid", // Rakuten Advertising (LinkShare)
             "admitad_uid", // Admitad
             "tduid", // Tradedoubler
@@ -268,6 +275,8 @@ export default {
             // aid はアフィリエイト ID、label はパートナーが付ける設置場所ごとのラベル
             // (Booking.com Affiliate Partner Support の "Links" より)。
             { suffixes: ["booking.com"], names: ["aid", "label"] },
+            // Best Service のアフィリエイトリンク (?aid=...)。
+            { suffixes: ["bestservice.com"], names: ["aid"] },
         ],
 
         /*

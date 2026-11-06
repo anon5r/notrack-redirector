@@ -146,12 +146,15 @@ page (stored per device) or with the strip options above.
   `rd_code`, Impact `irclickid` /
   `irgwc`, CJ `cjevent`, Awin `awc`, ShareASale `sscid`, Rakuten Advertising
   `ranMID` / `ranEAID` / `ranSiteID`, Admitad `admitad_uid`, Tradedoubler
-  `tduid`.
+  `tduid`, Post Affiliate Pro `a_aid` / `a_bid`, AvantLink `avad`,
+  FirstPromoter `fpr`, PartnerStack `ps_partner_key` / `ps_xid`, Refersion
+  `rfsn`, Skimlinks `xcust`, plus sub-IDs (`sharedid`, `cjdata`, `clickref`,
+  `afftrack`).
 - Host-scoped: Amazon (`tag`, `linkCode`, `linkId`, `ascsubtag`, `creative`,
   `creativeASIN`, `camp`, ...), Rakuten `rafcid`, Temu share referral
   (`refer_share_*`), AliExpress (`sk`, `dp`, `af`, `terminal_id`, ...), eBay
   Partner Network (`campid`, `mkcid`, `mkrid`, `mkevt`, `toolid`, `customid`),
-  Apple `at`, Booking.com (`aid`, `label`).
+  Apple `at`, Booking.com (`aid`, `label`), Best Service `aid`.
 - Decided by value (`markers`): when `utm_medium` contains `affiliate`, all
   `utm_*` are treated as affiliate codes. DMM (`utm_medium=dmm_affiliate`) and
   DLsite (`utm_medium=affiliate`) put the affiliate ID in `utm_source` this
@@ -163,8 +166,9 @@ codes keeps it even while tracking parameters are stripped. That also holds
 on `keepOnly` sites: Amazon's `tag` and `linkCode` stay when affiliate codes
 are kept, although they are not on the list of parameters pages need.
 
-The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules) and the
+The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules), the
 [AdGuard URL Tracking filter](https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter),
+the [Affiliate Tracking Parameter Reference](https://afterlink.io/parameters),
 plus the actual redirect chains of DMM and DLsite affiliate links.
 
 All of these lists, together with the `302` allowlist, live in

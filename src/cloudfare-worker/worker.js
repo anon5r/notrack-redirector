@@ -18,10 +18,10 @@
  * リダイレクトせず解決結果の URL を表示するだけなので、遷移先にこのサービスの
  * URL が Referer として残らない。
  *
- * allowlist と除去するパラメータの定義は src/shared/rules.json にある。
+ * allowlist と除去するパラメータの定義は src/shared/rules.mjs にある。
  */
 
-import rules from "../shared/rules.json" with { type: "json" };
+import rules from "../shared/rules.mjs";
 
 const MAX_REDIRECT_HOPS = 8;
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -65,7 +65,7 @@ const UI_CSP =
     `form-action 'self' ${ACCESS_LOGIN_ORIGIN}`;
 
 /**
- * ルール定義。ルールを変更する場合は src/shared/rules.json だけを編集すればよい。
+ * ルール定義。ルールを変更する場合は src/shared/rules.mjs だけを編集すればよい。
  */
 const TRACKER_RULES = rules.trackers.map((tracker) => ({
     host: tracker.host.toLowerCase(),

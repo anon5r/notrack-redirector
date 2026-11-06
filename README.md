@@ -53,7 +53,7 @@ cannot send someone a link to this service that lands them on a site of your
 choosing. These rules preserve that:
 
 - The `302` paths (`/-/resolve` and the DNS-transition path) stay restricted to
-  the `trackers` in `src/shared/rules.json`. **Never add a URL shortener** (`t.co`,
+  the `trackers` in `src/shared/rules.mjs`. **Never add a URL shortener** (`t.co`,
   `bit.ly`, ...) to that list: anyone can register an arbitrary destination
   there, which would turn those paths into an open redirector.
 - "Open automatically" is stored per device in `localStorage` and **cannot be
@@ -156,7 +156,8 @@ The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules) and the
 plus the actual redirect chains of DMM and DLsite affiliate links.
 
 All of these lists, together with the `302` allowlist, live in
-`src/shared/rules.json`. The Worker imports it and wrangler bundles it in at
+`src/shared/rules.mjs`. It is a plain ES module, so each rule can carry a
+comment with its source; the Worker imports it and wrangler bundles it in at
 deploy time. Edit that one file to change a rule.
 
 The allowlist `paths`, the host rules' `pathPatterns` and the markers'
@@ -275,7 +276,7 @@ governs the paths that issue a real redirect.
 src/cloudfare-worker/worker.js       Cloudflare Worker implementation
 src/cloudfare-worker/worker.test.js
 src/cloudfare-worker/wrangler.jsonc
-src/shared/rules.json                302 allowlist and parameters to strip
+src/shared/rules.mjs                 302 allowlist and parameters to strip
 src/shared/ui/                       Static page (index.html, style.css,
                                      app.js, icon.svg, manifest.webmanifest)
 src/lambda/nodejs/main.js            Stub, not implemented

@@ -533,7 +533,10 @@ function stripParams(url, options = DEFAULT_STRIP_OPTIONS) {
         return clean;
     }
 
-    const marked = markedAffiliateRules(host, clean.searchParams);
+    const marked = {
+        affiliate: markedRules(AFFILIATE_RULES, host, clean.searchParams),
+        tracking: markedRules(TRACKING_RULES, host, clean.searchParams),
+    };
     const keep = keepOnlyRule(host, url.pathname);
     for (const name of [...clean.searchParams.keys()]) {
         const kind = paramKind(host, name, marked, keep);
@@ -558,14 +561,14 @@ function stripPath(host, pathname, category) {
     return path || "/";
 }
 
-/** パラメータの値からアフィリエイト経由と判断できたルールを返す。 */
-function markedAffiliateRules(host, searchParams) {
+/** パラメータの値から当てはまると判断できた markers を返す。 */
+function markedRules(category, host, searchParams) {
     const values = new Map();
     for (const [name, value] of searchParams) {
         const lower = name.toLowerCase();
         values.set(lower, [...(values.get(lower) || []), value]);
     }
-    return AFFILIATE_RULES.markers.filter(
+    return category.markers.filter(
         (marker) =>
             (marker.suffixes.length === 0 || matchesAnyHost(host, marker.suffixes)) &&
             (values.get(marker.param) || []).some((value) => marker.pattern.test(value)),
@@ -589,12 +592,13 @@ function keepOnlyRule(host, pathname) {
  * keep が指定されていれば、そこで残すものとして挙げていないパラメータは
  * 計測用として扱う。
  */
-function paramKind(host, name, markedRules, keep) {
+function paramKind(host, name, marked, keep) {
     const lower = name.toLowerCase();
-    if (matchesCategory(host, lower, AFFILIATE_RULES) || markedRules.some((rule) => matchesNames(lower, rule))) {
+    const isMarked = (rules) => rules.some((rule) => matchesNames(lower, rule));
+    if (matchesCategory(host, lower, AFFILIATE_RULES) || isMarked(marked.affiliate)) {
         return "affiliate";
     }
-    if (matchesCategory(host, lower, TRACKING_RULES)) {
+    if (matchesCategory(host, lower, TRACKING_RULES) || isMarked(marked.tracking)) {
         return "tracking";
     }
     // work_type[0] のような配列形式は添字を除いて比較する。

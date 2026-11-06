@@ -130,6 +130,17 @@ export default {
         ],
 
         /*
+         * パラメータの値や組み合わせから計測用と判断できる場合に、names /
+         * prefixes を計測用として扱う。書式は affiliate.markers と同じ。
+         */
+        markers: [
+            // AD EBiS のダイレクト計測。サポートサイトに「&argument=アドエビス引数
+            // &dmai=広告ID」の形式と明記されている。argument はありふれた名前なので、
+            // dmai と一緒に付いているときだけ対象にする。
+            { suffixes: [], param: "dmai", pattern: ".", names: ["argument", "dmai"] },
+        ],
+
+        /*
          * 残すパラメータを列挙するサイト。ここに挙げたホストでは、names /
          * prefixes に当てはまらないパラメータをすべて計測用として除去する。
          * 遷移先の表示や機能に不要なものは計測かアフィリエイトとみなす方針。

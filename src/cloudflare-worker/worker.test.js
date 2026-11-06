@@ -225,6 +225,25 @@ test("stripParams は機能に不要なパラメータを除去してもアフ�
     );
 });
 
+test("stripParams は AD EBiS の計測パラメータを dmai と一緒のときだけ除去する", () => {
+    const cases = [
+        // 楽天アフィリエイト経由の広告主 LP で実際に付いていた形。
+        [
+            "https://lp.example/lpa08/?code=AG035050&utm_source=rakutengroup&utm_medium=affiliate&argument=xRQPviEd&dmai=a69435dee4a58a",
+            "https://lp.example/lpa08/?code=AG035050",
+        ],
+        // argument 単体はほかのサイトの機能パラメータかもしれないので残す。
+        ["https://app.example/run?argument=1", "https://app.example/run?argument=1"],
+    ];
+    for (const [raw, want] of cases) {
+        assert.equal(stripParams(new URL(raw)).toString(), want, raw);
+    }
+    assert.equal(
+        stripParams(new URL(cases[0][0]), { tracking: true, affiliate: false }).toString(),
+        "https://lp.example/lpa08/?code=AG035050&utm_source=rakutengroup&utm_medium=affiliate",
+    );
+});
+
 test("stripParams は両方を無効にすると URL を変えない", () => {
     const raw = "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x";
     assert.equal(stripParams(new URL(raw), { tracking: false, affiliate: false }).toString(), raw);

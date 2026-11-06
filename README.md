@@ -131,6 +131,8 @@ page (stored per device) or with the strip options above.
   `_p_*`, `_oak_*`, `refer_page_*`, ...), DMM (`dmmref`, `i3_ref`, `i3_ord`),
   AliExpress, eBay, Apple, Yahoo, YouTube, X/Twitter.
 
+- Decided by combination (`markers`): AD EBiS's `argument` and `dmai`, only
+  when `dmai` is present, since `argument` alone is a common name.
 - Everything a page does not need, on Amazon, Rakuten Ichiba / Books, Temu,
   DMM / FANZA and DLsite. For these sites `keepOnly` lists the parameters
   that pages actually use (search terms, filters, sort order, page number,

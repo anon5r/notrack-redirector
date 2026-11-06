@@ -27,6 +27,14 @@
 </form>
 
 <label class="toggle">
+<input type="checkbox" id="strip-tracking" checked>
+<span>トラッキングパラメータを除去する</span>
+</label>
+<label class="toggle">
+<input type="checkbox" id="strip-affiliate" checked>
+<span>アフィリエイトコードを除去する</span>
+</label>
+<label class="toggle">
 <input type="checkbox" id="auto-open">
 <span>解決したら自動で開く</span>
 </label>
@@ -41,7 +49,7 @@
 <h2>リダイレクト先</h2>
 <p class="destination"><code id="destination"></code></p>
 <p id="no-redirect" class="note" hidden>この URL はリダイレクトしませんでした。
-トラッキングパラメータのみ取り除いています。</p>
+パラメータの除去のみ行っています。</p>
 <div class="row">
 <button type="button" id="copy" class="primary">コピー</button>
 <a class="action" id="open-blank" target="_blank" rel="noreferrer noopener">新しいタブで開く</a>

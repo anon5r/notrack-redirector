@@ -33,8 +33,10 @@ Two ways to use it:
    unreliable. A refresh that only reloads the same page is treated as the
    final destination. A URL that does not redirect is kept as-is, so pasting
    an ordinary link still strips its tracking parameters.
-3. Tracking parameters (`utm_*`, `gclid`, Amazon `tag`, Rakuten `scid`, ...) are
-   removed from the resolved URL.
+3. Tracking parameters (`utm_*`, `gclid`, Amazon `pd_rd_*`, ...) and affiliate
+   codes (Amazon `tag`, Rakuten `scid=af_*`, `irclickid`, ...) are removed from
+   the resolved URL. Each of the two can be switched off; see
+   [What gets stripped](#what-gets-stripped).
 4. The cleaned URL is shown on the top page, returned as JSON, or sent as a
    `302` — depending on the endpoint used. Every response carries
    `Referrer-Policy: no-referrer`.
@@ -70,10 +72,20 @@ choosing. Two rules preserve that:
 | Path | Description |
 | ---- | ----------- |
 | `/` | URL input form (a static page). With `?u=<url>` the page resolves it through the API and shows the destination **without redirecting**. Any host is accepted. |
-| `/api/resolve?u=<url>` | Resolution as JSON: `{"original", "destination", "hops"}`, or `{"error", "code"}` on failure. Any host is accepted. |
+| `/api/resolve?u=<url>` | Resolution as JSON: `{"original", "destination", "hops"}`, or `{"error", "code"}` on failure. Any host is accepted. Accepts the strip options below. |
 | `/api/trackers` | The allowlisted hosts, used to render the list on the page. |
-| `/-/resolve?u=<tracking url>` | Returns a `302` to the cleaned destination. **Allowlisted hosts only.** |
+| `/-/resolve?u=<tracking url>` | Returns a `302` to the cleaned destination. **Allowlisted hosts only.** Accepts the strip options below. |
 | `/<tracking path>?<query>` | Returns a `302`. Used when the tracking hostname is pointed at this service by DNS or a Worker route. **Allowlisted hosts only.** |
+
+Strip options (both default to on):
+
+| Parameter | Description |
+| --------- | ----------- |
+| `strip_tracking=0` | Keep tracking parameters. |
+| `strip_affiliate=0` | Keep affiliate codes, so the referrer of the link still gets credited. |
+
+The DNS-transition path always strips both, since its query string belongs to
+the upstream URL.
 
 `hops` and the route shown on the page are reduced to scheme + host + path; the
 query strings of intermediate hops are not exposed.
@@ -109,19 +121,52 @@ cannot dial raw IP addresses.
 
 # What gets stripped
 
-- Global exact matches: `gclid`, `fbclid`, `msclkid`, `yclid`, `ttclid`, `_ga`,
-  `mkt_tok`, ...
+Parameters are split into two kinds, each of which can be switched off on the
+page (stored per device) or with the strip options above.
+
+**Tracking** — analytics and ad-click measurement:
+
+- Global exact matches: `gclid`, `fbclid`, `msclkid`, `yclid`, `ttclid`,
+  `_ga`, `mkt_tok`, ...
 - Global prefixes: `utm_`, `mtm_`, `pk_`, `piwik_`, `hsa_`, `trk_`, ...
-- Host-scoped names, for parameters that are ambiguous in general:
-  Amazon (`tag`, `linkCode`, `ascsubtag`, `ref`, ...), Rakuten (`scid`, `l-id`,
-  ...), Yahoo, YouTube, X/Twitter.
+- Host-scoped names, for parameters that are ambiguous in general: Amazon
+  (`ref`, `qid`, `pd_rd_*`, `pf_rd_*`, `hv*`, and `/ref=...` in the path),
+  Rakuten (`l-id`, `iasid`, `s-id`, non-affiliate `scid`, ...), Temu (`_x_*`,
+  `_p_*`, `_oak_*`, `refer_page_*`, ...), DMM (`dmmref`, `i3_ref`, `i3_ord`),
+  AliExpress, eBay, Apple, Yahoo, YouTube, X/Twitter.
+
+**Affiliate** — codes that credit whoever shared the link:
+
+- Global: `aff_*`, A8.net `a8`, ValueCommerce `vc_lpp`, Impact `irclickid` /
+  `irgwc`, CJ `cjevent`, Awin `awc`, ShareASale `sscid`, Rakuten Advertising
+  `ranMID` / `ranEAID` / `ranSiteID`, Admitad `admitad_uid`, Tradedoubler
+  `tduid`.
+- Host-scoped: Amazon (`tag`, `linkCode`, `linkId`, `ascsubtag`, `creative`,
+  `creativeASIN`, `camp`, ...), Rakuten `rafcid`, Temu share referral
+  (`refer_share_*`), AliExpress (`sk`, `dp`, `af`, `terminal_id`, ...), eBay
+  Partner Network (`campid`, `mkcid`, `mkrid`, `mkevt`, `toolid`, `customid`),
+  Apple `at`, Booking.com (`aid`, `label`).
+- Decided by value (`markers`): when `utm_medium` contains `affiliate`, all
+  `utm_*` are treated as affiliate codes. DMM (`utm_medium=dmm_affiliate`) and
+  DLsite (`utm_medium=affiliate`) put the affiliate ID in `utm_source` this
+  way. On Rakuten, `scid` / `sc2id` starting with `af_` are affiliate codes, and
+  on Yahoo! Shopping so is `sc_e` starting with `afvc` (ValueCommerce).
+
+A parameter that matches both kinds counts as affiliate, so keeping affiliate
+codes keeps it even while tracking parameters are stripped.
+
+The lists are based on [ClearURLs](https://github.com/ClearURLs/Rules) and the
+[AdGuard URL Tracking filter](https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter),
+plus the actual redirect chains of DMM and DLsite affiliate links.
 
 All of these lists live in `src/shared/rules.json`, which both implementations
 read: the Go build embeds it with `go:embed`, the Worker imports it at bundle
 time. Edit that one file to change a rule.
 
-Path patterns in it are regular expressions, so they must be valid in **both**
-Go's `regexp` and JavaScript's `RegExp`.
+Path patterns in it (the allowlist `paths`, the host rules' `pathPatterns` and
+the markers' `pattern`) are regular expressions, so they must be valid in
+**both** Go's `regexp` and JavaScript's `RegExp`. `pathPatterns` and `pattern`
+are matched case-insensitively.
 
 
 # Shared UI

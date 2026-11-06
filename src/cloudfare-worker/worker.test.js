@@ -14,7 +14,7 @@ import {
     parseHostMap,
     resolveDestination,
     scriptRedirectTarget,
-    stripTrackingParams,
+    stripParams,
     targetURL,
     validateHopURL,
 } from "./worker.js";
@@ -83,18 +83,87 @@ test("isNonPublicAddress", () => {
     }
 });
 
-test("stripTrackingParams", () => {
+test("stripParams は既定でトラッキングとアフィリエイトの両方を除去する", () => {
     const cases = [
         ["https://example.com/p?id=1&utm_source=a8&gclid=xyz", "https://example.com/p?id=1"],
         ["https://www.amazon.co.jp/dp/B0000?tag=aff-22&linkCode=osi&psc=1", "https://www.amazon.co.jp/dp/B0000"],
+        ["https://www.amazon.de/dp/B0000?tag=aff-21&pd_rd_w=abc", "https://www.amazon.de/dp/B0000"],
+        // Amazon はパスにも ref= の計測情報を埋め込む。
+        ["https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?qid=1&tag=aff-22", "https://www.amazon.co.jp/dp/B0000"],
         ["https://item.rakuten.co.jp/shop/item/?scid=af_link&l-id=top", "https://item.rakuten.co.jp/shop/item/"],
+        [
+            "https://www.dlsite.com/home/work/=/product_id/RJ01.html/?utm_medium=affiliate&utm_source=aff1",
+            "https://www.dlsite.com/home/work/=/product_id/RJ01.html/",
+        ],
+        ["https://www.temu.com/g.html?goods_id=1&sku_id=2&_x_ads_channel=g&refer_share_id=a", "https://www.temu.com/g.html?goods_id=1&sku_id=2"],
+        ["https://shop.example/p?id=1&irclickid=z&aff_sub=1&cjevent=c", "https://shop.example/p?id=1"],
+        ["https://www.booking.com/hotel/jp/x.html?aid=123&label=blog", "https://www.booking.com/hotel/jp/x.html"],
+        ["https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1", "https://store.shopping.yahoo.co.jp/s/i.html"],
         // ホスト固有パラメータは他ホストでは消さない。
         ["https://example.com/search?tag=go&ref=top", "https://example.com/search?tag=go&ref=top"],
+        ["https://example.com/ref=keep/p", "https://example.com/ref=keep/p"],
         ["https://example.com/p", "https://example.com/p"],
     ];
     for (const [raw, want] of cases) {
-        assert.equal(stripTrackingParams(new URL(raw)).toString(), want, raw);
+        assert.equal(stripParams(new URL(raw)).toString(), want, raw);
     }
+});
+
+test("stripParams はアフィリエイトを残してトラッキングだけを除去できる", () => {
+    const options = { tracking: true, affiliate: false };
+    const cases = [
+        [
+            "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&linkCode=osi&psc=1&pd_rd_w=x",
+            "https://www.amazon.co.jp/dp/B0000?tag=aff-22&linkCode=osi",
+        ],
+        // DMM / DLsite は utm_* にアフィリエイト ID を入れるため、まとめて残す。
+        [
+            "https://www.dlsite.com/home/work/=/product_id/RJ01.html/?utm_medium=affiliate&utm_campaign=sns_link&utm_source=aff1&gclid=x",
+            "https://www.dlsite.com/home/work/=/product_id/RJ01.html/?utm_medium=affiliate&utm_campaign=sns_link&utm_source=aff1",
+        ],
+        [
+            "https://www.dmm.co.jp/digital/?utm_medium=dmm_affiliate&utm_source=aff-001&dmmref=top",
+            "https://www.dmm.co.jp/digital/?utm_medium=dmm_affiliate&utm_source=aff-001",
+        ],
+        // 楽天の scid はアフィリエイト経由 (af_) のときだけ残す。
+        [
+            "https://item.rakuten.co.jp/shop/item/?scid=af_pc_etc&sc2id=af_101_0_0&l-id=top",
+            "https://item.rakuten.co.jp/shop/item/?scid=af_pc_etc&sc2id=af_101_0_0",
+        ],
+        ["https://item.rakuten.co.jp/shop/item/?scid=wi_ich_top&l-id=top", "https://item.rakuten.co.jp/shop/item/"],
+        [
+            "https://www.temu.com/g.html?goods_id=1&_x_ads_channel=g&refer_share_id=a&_x_ns_sku_id=1",
+            "https://www.temu.com/g.html?goods_id=1&refer_share_id=a",
+        ],
+        [
+            "https://shop.example/p?id=1&irclickid=z&utm_source=x&aff_sub=1",
+            "https://shop.example/p?id=1&irclickid=z&aff_sub=1",
+        ],
+        ["https://www.booking.com/hotel/jp/x.html?aid=123&label=blog", "https://www.booking.com/hotel/jp/x.html?aid=123&label=blog"],
+        // Yahoo の sc_e はバリューコマース経由 (afvc) のときだけ残す。
+        ["https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1&sc_i=x", "https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1"],
+        ["https://store.shopping.yahoo.co.jp/s/i.html?sc_e=slga_pla", "https://store.shopping.yahoo.co.jp/s/i.html"],
+    ];
+    for (const [raw, want] of cases) {
+        assert.equal(stripParams(new URL(raw), options).toString(), want, raw);
+    }
+});
+
+test("stripParams はトラッキングを残してアフィリエイトだけを除去できる", () => {
+    const options = { tracking: false, affiliate: true };
+    const cases = [
+        ["https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&psc=1", "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?psc=1"],
+        ["https://www.dlsite.com/w/?utm_medium=affiliate&utm_source=aff1", "https://www.dlsite.com/w/"],
+        ["https://news.example/a?utm_source=news&a8=x", "https://news.example/a?utm_source=news"],
+    ];
+    for (const [raw, want] of cases) {
+        assert.equal(stripParams(new URL(raw), options).toString(), want, raw);
+    }
+});
+
+test("stripParams は両方を無効にすると URL を変えない", () => {
+    const raw = "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x";
+    assert.equal(stripParams(new URL(raw), { tracking: false, affiliate: false }).toString(), raw);
 });
 
 test("parseHostMap", () => {
@@ -144,7 +213,7 @@ test("resolveDestination は上流の Location のみを根拠にする", async 
         new URL("https://px.a8.net/svt/ejp?a8mat=https%3A%2F%2Fphishing.example%2F"),
         new Map(),
     );
-    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/final?id=1");
+    assert.equal(stripParams(result.final).toString(), "https://example.com/final?id=1");
     assert.deepEqual(hopLabels(result.hops), ["https://example.com/hop", "https://example.com/final"]);
 });
 
@@ -177,7 +246,7 @@ test("resolveDestination はリダイレクトしない URL もそのまま返�
 
     const result = await resolveDestination(new URL("https://example.com/item?id=1&utm_source=mail"), new Map());
     assert.equal(result.hops.length, 0);
-    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/item?id=1");
+    assert.equal(stripParams(result.final).toString(), "https://example.com/item?id=1");
 });
 
 test("parseResolvableURL は allowlist 外のホストも受け付ける", () => {
@@ -293,6 +362,11 @@ test("/api/resolve は JSON を返す", async (t) => {
     assert.equal(body.destination, "https://example.com/final?id=1");
     assert.deepEqual(body.hops, ["https://example.com/final"]);
 
+    const keep = await get(
+        "https://redirector.example/api/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc&strip_tracking=0",
+    );
+    assert.equal((await keep.json()).destination, "https://example.com/final?id=1&utm_source=a8");
+
     const bad = await get("https://redirector.example/api/resolve?u=http%3A%2F%2F127.0.0.1%2Fadmin");
     assert.equal(bad.status, 403);
     assert.equal((await bad.json()).code, "blocked_destination");
@@ -304,6 +378,16 @@ test("トラッキングホスト宛のリクエストは従来どおり 302 を
     const response = await get("https://px.a8.net/svt/ejp?a8mat=abc");
     assert.equal(response.status, 302);
     assert.equal(response.headers.get("Location"), "https://example.com/final?id=1");
+});
+
+test("/-/resolve は除去オプションを受け付ける", async (t) => {
+    t.after(stubUpstream());
+
+    const response = await get(
+        "https://redirector.example/-/resolve?u=https%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc&strip_tracking=0",
+    );
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("Location"), "https://example.com/final?id=1&utm_source=a8");
 });
 
 test("ループガードヘッダ付きのリクエストは 508 を返す", async () => {
@@ -398,7 +482,7 @@ test("resolveDestination は meta refresh も追跡する", async (t) => {
     t.after(restore);
 
     const result = await resolveDestination(new URL("https://tracker.example/mk/cl"), new Map());
-    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/download");
+    assert.equal(stripParams(result.final).toString(), "https://example.com/download");
     assert.equal(result.hops.length, 1);
 });
 
@@ -443,7 +527,7 @@ test("resolveDestination は空の 200 応答の Refresh ヘッダを追跡す�
     t.after(restore);
 
     const result = await resolveDestination(new URL("https://tracker.example/click"), new Map());
-    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/landing");
+    assert.equal(stripParams(result.final).toString(), "https://example.com/landing");
     assert.deepEqual(hopLabels(result.hops), ["https://example.com/landing"]);
 });
 
@@ -455,7 +539,7 @@ test("resolveDestination は JS で即座に遷移するページを追跡する
     t.after(restore);
 
     const result = await resolveDestination(new URL("https://tracker.example/click"), new Map());
-    assert.equal(stripTrackingParams(result.final).toString(), "https://example.com/js?id=1");
+    assert.equal(stripParams(result.final).toString(), "https://example.com/js?id=1");
     assert.equal(result.hops.length, 1);
 });
 

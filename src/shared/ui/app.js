@@ -43,6 +43,8 @@ const el = {
   input: document.getElementById("input"),
   paste: document.getElementById("paste"),
   autoOpen: document.getElementById("auto-open"),
+  stripTracking: document.getElementById("strip-tracking"),
+  stripAffiliate: document.getElementById("strip-affiliate"),
   status: document.getElementById("status"),
   error: document.getElementById("error"),
   reauth: document.getElementById("reauth"),
@@ -58,21 +60,42 @@ const el = {
   trackers: document.getElementById("trackers"),
 };
 
+/**
+ * 除去オプションの切り替え、保存先、API で無効化に使うパラメータ。
+ * 既定ではどちらも除去する。
+ */
+const STRIP_SETTINGS = [
+  { toggle: el.stripTracking, key: "notrack:strip-tracking", param: "strip_tracking" },
+  { toggle: el.stripAffiliate, key: "notrack:strip-affiliate", param: "strip_affiliate" },
+];
+
 /** localStorage は利用できない環境があるため、失敗しても動作を止めない。 */
-function readAutoOpen() {
+function readSetting(key, fallback) {
   try {
-    return localStorage.getItem(AUTO_OPEN_KEY) === "1";
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === "1";
   } catch {
-    return false;
+    return fallback;
   }
 }
 
-function writeAutoOpen(enabled) {
+function writeSetting(key, enabled) {
   try {
-    localStorage.setItem(AUTO_OPEN_KEY, enabled ? "1" : "0");
+    localStorage.setItem(key, enabled ? "1" : "0");
   } catch {
     // 保存できなくても今回の操作には影響しない。
   }
+}
+
+function readAutoOpen() {
+  return readSetting(AUTO_OPEN_KEY, false);
+}
+
+/** 無効にした除去オプションを API のクエリに変換する。 */
+function stripQuery() {
+  return STRIP_SETTINGS.filter((setting) => !setting.toggle.checked)
+    .map((setting) => `&${setting.param}=0`)
+    .join("");
 }
 
 /**
@@ -143,7 +166,7 @@ async function resolve(raw) {
   el.result.hidden = true;
 
   try {
-    const response = await requestJSON(`/api/resolve?u=${encodeURIComponent(raw)}`);
+    const response = await requestJSON(`/api/resolve?u=${encodeURIComponent(raw)}${stripQuery()}`);
 
     if (isAuthRedirect(response)) {
       showError(AUTH_MESSAGE, true);
@@ -222,7 +245,18 @@ el.paste.addEventListener("click", async () => {
 el.reload.addEventListener("click", () => location.reload());
 
 el.autoOpen.checked = readAutoOpen();
-el.autoOpen.addEventListener("change", () => writeAutoOpen(el.autoOpen.checked));
+el.autoOpen.addEventListener("change", () => writeSetting(AUTO_OPEN_KEY, el.autoOpen.checked));
+
+for (const { toggle, key } of STRIP_SETTINGS) {
+  toggle.checked = readSetting(key, true);
+  toggle.addEventListener("change", () => {
+    writeSetting(key, toggle.checked);
+    // 表示中の結果を新しい設定で取り直す。
+    if (!el.result.hidden && el.input.value) {
+      resolve(el.input.value);
+    }
+  });
+}
 
 loadTrackers();
 

@@ -161,38 +161,112 @@ func TestIsPublicIP(t *testing.T) {
 	}
 }
 
-func TestStripTrackingParams(t *testing.T) {
+func TestStripParams(t *testing.T) {
+	all := stripOptions{tracking: true, affiliate: true}
+	trackingOnly := stripOptions{tracking: true}
+	affiliateOnly := stripOptions{affiliate: true}
+
+	// Go 実装はクエリを再構成するため、パラメータは名前順に並ぶ。
 	cases := []struct {
+		name string
+		opts stripOptions
 		raw  string
 		want string
 	}{
+		{"汎用の計測パラメータ", all, "https://example.com/p?id=1&utm_source=a8&gclid=xyz", "https://example.com/p?id=1"},
+		{"Amazon", all, "https://www.amazon.co.jp/dp/B0000?tag=aff-22&linkCode=osi&psc=1", "https://www.amazon.co.jp/dp/B0000"},
+		{"Amazon の他地域", all, "https://www.amazon.de/dp/B0000?tag=aff-21&pd_rd_w=abc", "https://www.amazon.de/dp/B0000"},
+		{"Amazon のパス中の ref", all, "https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?qid=1&tag=aff-22", "https://www.amazon.co.jp/dp/B0000"},
+		{"楽天", all, "https://item.rakuten.co.jp/shop/item/?scid=af_link&l-id=top", "https://item.rakuten.co.jp/shop/item/"},
 		{
-			"https://example.com/p?id=1&utm_source=a8&gclid=xyz",
-			"https://example.com/p?id=1",
+			"DLsite", all,
+			"https://www.dlsite.com/home/work/=/product_id/RJ01.html/?utm_medium=affiliate&utm_source=aff1",
+			"https://www.dlsite.com/home/work/=/product_id/RJ01.html/",
 		},
 		{
-			"https://www.amazon.co.jp/dp/B0000?tag=aff-22&linkCode=osi&psc=1",
-			"https://www.amazon.co.jp/dp/B0000",
+			"Temu", all,
+			"https://www.temu.com/g.html?goods_id=1&sku_id=2&_x_ads_channel=g&refer_share_id=a",
+			"https://www.temu.com/g.html?goods_id=1&sku_id=2",
+		},
+		{"汎用のアフィリエイトパラメータ", all, "https://shop.example/p?id=1&irclickid=z&aff_sub=1&cjevent=c", "https://shop.example/p?id=1"},
+		{"Booking.com", all, "https://www.booking.com/hotel/jp/x.html?aid=123&label=blog", "https://www.booking.com/hotel/jp/x.html"},
+		{"Yahoo のバリューコマース経由", all, "https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1", "https://store.shopping.yahoo.co.jp/s/i.html"},
+		{"ホスト固有パラメータは他ホストでは消さない", all, "https://example.com/search?tag=go&ref=top", "https://example.com/search?ref=top&tag=go"},
+		{"パスの ref= も他ホストでは消さない", all, "https://example.com/ref=keep/p", "https://example.com/ref=keep/p"},
+		{"クエリなし", all, "https://example.com/p", "https://example.com/p"},
+
+		{
+			"Amazon のアフィリエイトを残す", trackingOnly,
+			"https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&linkCode=osi&psc=1&pd_rd_w=x",
+			"https://www.amazon.co.jp/dp/B0000?linkCode=osi&tag=aff-22",
 		},
 		{
-			"https://item.rakuten.co.jp/shop/item/?scid=af_link&l-id=top",
+			"DLsite の utm_* はアフィリエイトとして残す", trackingOnly,
+			"https://www.dlsite.com/w/?utm_medium=affiliate&utm_campaign=sns_link&utm_source=aff1&gclid=x",
+			"https://www.dlsite.com/w/?utm_campaign=sns_link&utm_medium=affiliate&utm_source=aff1",
+		},
+		{
+			"DMM の utm_* はアフィリエイトとして残す", trackingOnly,
+			"https://www.dmm.co.jp/digital/?utm_medium=dmm_affiliate&utm_source=aff-001&dmmref=top",
+			"https://www.dmm.co.jp/digital/?utm_medium=dmm_affiliate&utm_source=aff-001",
+		},
+		{
+			"楽天の af_ で始まる scid は残す", trackingOnly,
+			"https://item.rakuten.co.jp/shop/item/?scid=af_pc_etc&sc2id=af_101_0_0&l-id=top",
+			"https://item.rakuten.co.jp/shop/item/?sc2id=af_101_0_0&scid=af_pc_etc",
+		},
+		{
+			"楽天の自社計測用 scid は消す", trackingOnly,
+			"https://item.rakuten.co.jp/shop/item/?scid=wi_ich_top&l-id=top",
 			"https://item.rakuten.co.jp/shop/item/",
 		},
 		{
-			// ホスト固有パラメータは他ホストでは消さない。
-			"https://example.com/search?tag=go&ref=top",
-			"https://example.com/search?ref=top&tag=go",
+			"Temu の紹介パラメータを残す", trackingOnly,
+			"https://www.temu.com/g.html?goods_id=1&_x_ads_channel=g&refer_share_id=a&_x_ns_sku_id=1",
+			"https://www.temu.com/g.html?goods_id=1&refer_share_id=a",
 		},
 		{
-			"https://example.com/p",
-			"https://example.com/p",
+			"汎用のアフィリエイトパラメータを残す", trackingOnly,
+			"https://shop.example/p?id=1&irclickid=z&utm_source=x&aff_sub=1",
+			"https://shop.example/p?aff_sub=1&id=1&irclickid=z",
+		},
+		{
+			"Booking.com のアフィリエイトを残す", trackingOnly,
+			"https://www.booking.com/hotel/jp/x.html?aid=123&label=blog",
+			"https://www.booking.com/hotel/jp/x.html?aid=123&label=blog",
+		},
+		{
+			"Yahoo の afvc で始まる sc_e は残す", trackingOnly,
+			"https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1&sc_i=x",
+			"https://store.shopping.yahoo.co.jp/s/i.html?sc_e=afvc_shp_1",
+		},
+		{
+			"Yahoo の自社計測用 sc_e は消す", trackingOnly,
+			"https://store.shopping.yahoo.co.jp/s/i.html?sc_e=slga_pla",
+			"https://store.shopping.yahoo.co.jp/s/i.html",
+		},
+
+		{
+			"Amazon の計測を残す", affiliateOnly,
+			"https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&psc=1",
+			"https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?psc=1",
+		},
+		{"DLsite のアフィリエイトを消す", affiliateOnly, "https://www.dlsite.com/w/?utm_medium=affiliate&utm_source=aff1", "https://www.dlsite.com/w/"},
+		{"通常の utm_* は残す", affiliateOnly, "https://news.example/a?utm_source=news&a8=x", "https://news.example/a?utm_source=news"},
+
+		{
+			"両方無効なら変えない", stripOptions{},
+			"https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x",
+			"https://www.amazon.co.jp/dp/B0000/ref=sr_1_1?tag=aff-22&utm_source=x",
 		},
 	}
 	for _, c := range cases {
-		got := stripTrackingParams(mustParse(t, c.raw)).String()
-		if got != c.want {
-			t.Errorf("stripTrackingParams(%q) = %q, want %q", c.raw, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			got := stripParams(mustParse(t, c.raw), c.opts).String()
+			if got != c.want {
+				t.Errorf("stripParams(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
 	}
 }
 
@@ -245,7 +319,7 @@ func TestResolveDestinationFollowsUpstreamOnly(t *testing.T) {
 		t.Errorf("hops = %v, want 2 entries", result.Hops)
 	}
 
-	got := stripTrackingParams(result.Final).String()
+	got := stripParams(result.Final, defaultStripOptions).String()
 	want := "http://example.com/final?id=1"
 	if got != want {
 		t.Errorf("destination = %q, want %q", got, want)
@@ -297,7 +371,7 @@ func TestResolveDestinationKeepsNonRedirectingURL(t *testing.T) {
 	if len(result.Hops) != 0 {
 		t.Errorf("hops = %v, want none", result.Hops)
 	}
-	if got := stripTrackingParams(result.Final).String(); got != "http://example.com/item?id=1" {
+	if got := stripParams(result.Final, defaultStripOptions).String(); got != "http://example.com/item?id=1" {
 		t.Errorf("destination = %q", got)
 	}
 }
@@ -446,6 +520,15 @@ func TestHandleAPI(t *testing.T) {
 		t.Errorf("hops = %v, want 1 entry", got.Hops)
 	}
 
+	keep := doRequest(t, client, apiEndpoint+"?u=http%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc&strip_tracking=0")
+	var kept apiResponse
+	if err := json.Unmarshal(keep.Body.Bytes(), &kept); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if kept.Destination != "http://example.com/final?id=1&utm_source=a8" {
+		t.Errorf("destination with strip_tracking=0 = %q", kept.Destination)
+	}
+
 	bad := doRequest(t, client, apiEndpoint+"?u=http%3A%2F%2F127.0.0.1%2Fadmin")
 	if bad.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", bad.Code)
@@ -457,6 +540,18 @@ func TestHandleAPI(t *testing.T) {
 	}
 	if badBody.Code != codeBlockedDestination {
 		t.Errorf("code = %q, want %q", badBody.Code, codeBlockedDestination)
+	}
+}
+
+func TestResolveEndpointAcceptsStripOptions(t *testing.T) {
+	_, client := newStubUpstream(t)
+
+	w := doRequest(t, client, resolveEndpoint+"?u=http%3A%2F%2Fpx.a8.net%2Fsvt%2Fejp%3Fa8mat%3Dabc&strip_tracking=0")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Location"); got != "http://example.com/final?id=1&utm_source=a8" {
+		t.Errorf("Location = %q", got)
 	}
 }
 
@@ -553,7 +648,7 @@ func TestResolveDestinationFollowsMetaRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDestination: %v", err)
 	}
-	if got := stripTrackingParams(result.Final).String(); got != "http://example.com/download" {
+	if got := stripParams(result.Final, defaultStripOptions).String(); got != "http://example.com/download" {
 		t.Errorf("destination = %q", got)
 	}
 	if len(result.Hops) != 1 {

@@ -101,12 +101,31 @@ type sharedRules struct {
 		Host  string   `json:"host"`
 		Paths []string `json:"paths"`
 	} `json:"trackers"`
-	TrackingParamPrefixes []string `json:"trackingParamPrefixes"`
-	TrackingParamNames    []string `json:"trackingParamNames"`
-	HostTrackingParams    []struct {
-		Suffix string   `json:"suffix"`
-		Names  []string `json:"names"`
-	} `json:"hostTrackingParams"`
+	Tracking  sharedParamRules `json:"tracking"`
+	Affiliate sharedParamRules `json:"affiliate"`
+}
+
+// sharedParamRules は除去するパラメータの 1 区分 (計測用 / アフィリエイト用)。
+type sharedParamRules struct {
+	Prefixes []string           `json:"prefixes"`
+	Names    []string           `json:"names"`
+	Hosts    []sharedHostRule   `json:"hosts"`
+	Markers  []sharedMarkerRule `json:"markers"`
+}
+
+// sharedHostRule はホストを限定して除去するパラメータの定義。
+type sharedHostRule struct {
+	Suffixes     []string `json:"suffixes"`
+	Names        []string `json:"names"`
+	Prefixes     []string `json:"prefixes"`
+	PathPatterns []string `json:"pathPatterns"`
+}
+
+// sharedMarkerRule は値からアフィリエイト経由と判断するパラメータの定義。
+type sharedMarkerRule struct {
+	sharedHostRule
+	Param   string `json:"param"`
+	Pattern string `json:"pattern"`
 }
 
 // trackerRule は上流として接続を許可するトラッキングサービスを表す。
@@ -117,21 +136,65 @@ type trackerRule struct {
 	paths []*regexp.Regexp
 }
 
-// hostParamRule はホストを限定して除去するクエリパラメータの定義。
-type hostParamRule struct {
-	suffix string
-	names  []string
+// nameRule は完全一致 / 前方一致でパラメータ名を判定する。
+type nameRule struct {
+	names    map[string]struct{}
+	prefixes []string
 }
+
+// hostParamRule はホストを限定して除去するパラメータの定義。
+type hostParamRule struct {
+	nameRule
+	suffixes     []string
+	pathPatterns []*regexp.Regexp
+}
+
+// markerRule は param の値が pattern に一致するとき、nameRule の
+// パラメータをアフィリエイト用として扱う。
+type markerRule struct {
+	hostParamRule
+	param   string
+	pattern *regexp.Regexp
+}
+
+// paramRules は除去するパラメータの 1 区分。
+type paramRules struct {
+	nameRule
+	hosts   []hostParamRule
+	markers []markerRule
+}
+
+// stripOptions はどの区分のパラメータを除去するかを表す。
+type stripOptions struct {
+	tracking  bool
+	affiliate bool
+}
+
+// defaultStripOptions は指定がない場合の除去オプション。両方を除去する。
+var defaultStripOptions = stripOptions{tracking: true, affiliate: true}
+
+// 除去オプションを無効にするクエリパラメータ。値が "0" のとき無効になる。
+const (
+	stripTrackingParam  = "strip_tracking"
+	stripAffiliateParam = "strip_affiliate"
+)
+
+// パラメータの分類。
+type paramKind int
+
+const (
+	kindNone paramKind = iota
+	kindTracking
+	kindAffiliate
+)
 
 var (
 	// trackerRules は処理対象とするトラッキングサービスの allowlist。
 	trackerRules []trackerRule
-	// trackingParamPrefixes は前方一致で除去するクエリパラメータ。
-	trackingParamPrefixes []string
-	// trackingParamNames は完全一致で除去するクエリパラメータ。
-	trackingParamNames map[string]struct{}
-	// hostTrackingParams はホストごとに追加で除去するクエリパラメータ。
-	hostTrackingParams []hostParamRule
+	// trackingRules は計測用パラメータの除去ルール。
+	trackingRules paramRules
+	// affiliateRules はアフィリエイト / 紹介報酬用パラメータの除去ルール。
+	affiliateRules paramRules
 )
 
 // init は共有ルール定義を読み込む。定義が壊れている場合は起動させない。
@@ -150,20 +213,52 @@ func init() {
 		trackerRules = append(trackerRules, rule)
 	}
 
-	trackingParamPrefixes = parsed.TrackingParamPrefixes
+	trackingRules = compileParamRules(parsed.Tracking)
+	affiliateRules = compileParamRules(parsed.Affiliate)
+}
 
-	trackingParamNames = make(map[string]struct{}, len(parsed.TrackingParamNames))
-	for _, name := range parsed.TrackingParamNames {
-		trackingParamNames[strings.ToLower(name)] = struct{}{}
+// compileParamRules は除去ルールを実行時の形に変換する。
+// 名前は大文字小文字を区別しないため、すべて小文字にそろえる。
+func compileParamRules(src sharedParamRules) paramRules {
+	rules := paramRules{nameRule: compileNameRule(src.Names, src.Prefixes)}
+	for _, host := range src.Hosts {
+		rules.hosts = append(rules.hosts, compileHostRule(host))
 	}
-
-	hostTrackingParams = make([]hostParamRule, 0, len(parsed.HostTrackingParams))
-	for _, entry := range parsed.HostTrackingParams {
-		hostTrackingParams = append(hostTrackingParams, hostParamRule{
-			suffix: strings.ToLower(entry.Suffix),
-			names:  entry.Names,
+	for _, marker := range src.Markers {
+		rules.markers = append(rules.markers, markerRule{
+			hostParamRule: compileHostRule(marker.sharedHostRule),
+			param:         strings.ToLower(marker.Param),
+			pattern:       regexp.MustCompile("(?i)" + marker.Pattern),
 		})
 	}
+	return rules
+}
+
+func compileHostRule(src sharedHostRule) hostParamRule {
+	rule := hostParamRule{
+		nameRule: compileNameRule(src.Names, src.Prefixes),
+		suffixes: lowerAll(src.Suffixes),
+	}
+	for _, pattern := range src.PathPatterns {
+		rule.pathPatterns = append(rule.pathPatterns, regexp.MustCompile("(?i)"+pattern))
+	}
+	return rule
+}
+
+func compileNameRule(names, prefixes []string) nameRule {
+	rule := nameRule{names: make(map[string]struct{}, len(names)), prefixes: lowerAll(prefixes)}
+	for _, name := range names {
+		rule.names[strings.ToLower(name)] = struct{}{}
+	}
+	return rule
+}
+
+func lowerAll(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, strings.ToLower(value))
+	}
+	return result
 }
 
 func main() {
@@ -238,7 +333,12 @@ func handleRedirect(client *http.Client, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	clean := stripTrackingParams(result.Final)
+	// DNS 付け替え運用ではクエリが上流のものなので、オプションは読まない。
+	opts := defaultStripOptions
+	if r.URL.Path == resolveEndpoint {
+		opts = parseStripOptions(r.URL.Query())
+	}
+	clean := stripParams(result.Final, opts)
 	log.Printf("redirect: %s -> %s", target.Redacted(), clean.String())
 
 	w.Header().Set("Location", clean.String())
@@ -272,7 +372,7 @@ func handleAPI(client *http.Client, w http.ResponseWriter, r *http.Request) {
 		body.Error = err.Error()
 		body.Code = errorCode(err)
 	} else {
-		body.Destination = stripTrackingParams(result.Final).String()
+		body.Destination = stripParams(result.Final, parseStripOptions(r.URL.Query())).String()
 		body.Hops = hopLabels(result.Hops)
 	}
 
@@ -655,42 +755,146 @@ func isPublicIP(ip net.IP) bool {
 	return true
 }
 
-// stripTrackingParams は URL からトラッキング用パラメータを除去する。
-func stripTrackingParams(u *url.URL) *url.URL {
+// parseStripOptions はリクエストのクエリから除去オプションを読み取る。
+func parseStripOptions(query url.Values) stripOptions {
+	return stripOptions{
+		tracking:  query.Get(stripTrackingParam) != "0",
+		affiliate: query.Get(stripAffiliateParam) != "0",
+	}
+}
+
+// stripParams は URL から計測用 / アフィリエイト用のパラメータを除去する。
+// どちらを除去するかは opts で選ぶ。両方に当てはまるものはアフィリエイト
+// として扱うため、アフィリエイトを残す指定なら計測用でも残る。
+func stripParams(u *url.URL, opts stripOptions) *url.URL {
 	clean := *u
+	host := strings.ToLower(clean.Hostname())
+
+	path := clean.Path
+	if opts.tracking {
+		path = stripPath(host, path, trackingRules)
+	}
+	if opts.affiliate {
+		path = stripPath(host, path, affiliateRules)
+	}
+	if path != clean.Path {
+		clean.Path = path
+		clean.RawPath = ""
+	}
+
 	if clean.RawQuery == "" {
 		return &clean
 	}
 
-	host := strings.ToLower(clean.Hostname())
 	query := clean.Query()
+	marked := markedAffiliateRules(host, query)
 	for name := range query {
-		if isTrackingParam(host, name) {
-			query.Del(name)
+		switch classifyParam(host, name, marked) {
+		case kindAffiliate:
+			if opts.affiliate {
+				query.Del(name)
+			}
+		case kindTracking:
+			if opts.tracking {
+				query.Del(name)
+			}
 		}
 	}
 	clean.RawQuery = query.Encode()
 	return &clean
 }
 
-func isTrackingParam(host, name string) bool {
+// stripPath はパスに埋め込まれた計測情報 (Amazon の /ref=... など) を取り除く。
+func stripPath(host, path string, rules paramRules) string {
+	for _, entry := range rules.hosts {
+		if len(entry.pathPatterns) == 0 || !matchesAnyHost(host, entry.suffixes) {
+			continue
+		}
+		for _, pattern := range entry.pathPatterns {
+			path = pattern.ReplaceAllString(path, "")
+		}
+	}
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+// markedAffiliateRules はパラメータの値からアフィリエイト経由と判断できた
+// ルールを返す。
+func markedAffiliateRules(host string, query url.Values) []nameRule {
+	var marked []nameRule
+	for _, marker := range affiliateRules.markers {
+		if len(marker.suffixes) > 0 && !matchesAnyHost(host, marker.suffixes) {
+			continue
+		}
+		if markerMatches(marker, query) {
+			marked = append(marked, marker.nameRule)
+		}
+	}
+	return marked
+}
+
+func markerMatches(marker markerRule, query url.Values) bool {
+	for name, values := range query {
+		if strings.ToLower(name) != marker.param {
+			continue
+		}
+		for _, value := range values {
+			if marker.pattern.MatchString(value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// classifyParam はパラメータを計測用 / アフィリエイト用 / 対象外に分類する。
+func classifyParam(host, name string, marked []nameRule) paramKind {
 	lower := strings.ToLower(name)
-	if _, ok := trackingParamNames[lower]; ok {
+	if affiliateRules.matches(host, lower) {
+		return kindAffiliate
+	}
+	for _, rule := range marked {
+		if rule.matches(lower) {
+			return kindAffiliate
+		}
+	}
+	if trackingRules.matches(host, lower) {
+		return kindTracking
+	}
+	return kindNone
+}
+
+// matches は小文字の名前がこの区分に当てはまるかを判定する。
+func (r paramRules) matches(host, name string) bool {
+	if r.nameRule.matches(name) {
 		return true
 	}
-	for _, prefix := range trackingParamPrefixes {
-		if strings.HasPrefix(lower, prefix) {
+	for _, entry := range r.hosts {
+		if matchesAnyHost(host, entry.suffixes) && entry.nameRule.matches(name) {
 			return true
 		}
 	}
-	for _, entry := range hostTrackingParams {
-		if !hostMatches(host, entry.suffix) {
-			continue
+	return false
+}
+
+func (r nameRule) matches(name string) bool {
+	if _, ok := r.names[name]; ok {
+		return true
+	}
+	for _, prefix := range r.prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
 		}
-		for _, n := range entry.names {
-			if strings.EqualFold(n, name) {
-				return true
-			}
+	}
+	return false
+}
+
+func matchesAnyHost(host string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if hostMatches(host, suffix) {
+			return true
 		}
 	}
 	return false

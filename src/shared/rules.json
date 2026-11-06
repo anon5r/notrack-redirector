@@ -11,44 +11,105 @@
     { "host": "click.linksynergy.com", "paths": [] }
   ],
 
-  "//trackingParamPrefixes": "前方一致で除去するクエリパラメータ。",
-  "trackingParamPrefixes": [
-    "utm_", "mtm_", "pk_", "piwik_", "matomo_", "hsa_", "vero_", "oly_",
-    "trk_", "_bta_", "__hs", "ito_", "at_custom", "spm_"
-  ],
+  "//paramRules": "最終 URL から除去するパラメータ。tracking (計測用) と affiliate (アフィリエイト / 紹介報酬用) に分け、利用者がそれぞれの除去を選べるようにする。1 つのパラメータが両方に当てはまる場合は affiliate として扱う。names は完全一致、prefixes は前方一致で、どちらも大文字小文字を区別しない (小文字で記述する)。ref / pid / sid / cid のように正規の機能パラメータと衝突しうる名前は hosts でホストを限定して扱う。hosts の suffixes はサフィックス一致、pathPatterns はパスから取り除く部分の正規表現。出典は主に ClearURLs (https://rules2.clearurls.xyz/data.minify.json) と AdGuard URL Tracking filter (https://github.com/AdguardTeam/AdguardFilters/tree/master/TrackParamFilter)。",
 
-  "//trackingParamNames": "完全一致で除去するクエリパラメータ。ref / pid / sid / cid のように正規の機能パラメータと衝突しうる名前はここには入れず、hostTrackingParams 側でホストを限定して扱う。",
-  "trackingParamNames": [
-    "gclid", "gclsrc", "dclid", "gbraid", "wbraid",
-    "fbclid", "msclkid", "yclid", "twclid", "ttclid",
-    "igshid", "igsh", "li_fat_id", "rdt_cid", "epik",
-    "s_kwcid", "ef_id", "mkt_tok", "wickedid", "_openstat",
-    "yadcid", "yadid", "_ga", "_gl", "__s",
-    "mc_cid", "mc_eid", "ml_subscriber", "ml_subscriber_hash",
-    "fb_action_ids", "fb_action_types", "fb_source", "fb_ref",
-    "action_object_map", "action_type_map", "action_ref_map",
-    "vc_lpp", "a8", "msockid"
-  ],
+  "tracking": {
+    "prefixes": [
+      "utm_", "mtm_", "pk_", "piwik_", "matomo_", "hsa_", "vero_", "oly_",
+      "trk_", "_bta_", "__hs", "ito_", "at_custom", "spm_"
+    ],
+    "names": [
+      "gclid", "gclsrc", "dclid", "gbraid", "wbraid",
+      "fbclid", "msclkid", "yclid", "twclid", "ttclid",
+      "igshid", "igsh", "li_fat_id", "rdt_cid", "epik",
+      "s_kwcid", "ef_id", "mkt_tok", "wickedid", "_openstat",
+      "yadcid", "yadid", "_ga", "_gl", "__s",
+      "mc_cid", "mc_eid", "ml_subscriber", "ml_subscriber_hash",
+      "fb_action_ids", "fb_action_types", "fb_source", "fb_ref",
+      "action_object_map", "action_type_map", "action_ref_map",
+      "msockid"
+    ],
+    "hosts": [
+      {
+        "suffixes": [
+          "amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de", "amazon.fr",
+          "amazon.it", "amazon.es", "amazon.nl", "amazon.se", "amazon.pl",
+          "amazon.com.be", "amazon.com.tr", "amazon.ca", "amazon.com.mx", "amazon.com.br",
+          "amazon.com.au", "amazon.in", "amazon.sg", "amazon.ae", "amazon.sa", "amazon.eg"
+        ],
+        "names": ["ref", "ref_", "psc", "qid", "sr", "sprefix", "crid", "dib", "dib_tag",
+                  "content-id", "_encoding", "th", "refrid", "dchild", "spia", "aaxitk",
+                  "hvadid", "hvbmt", "hvdev", "hvlocphy", "hvnetw", "hvqmt", "hvrand",
+                  "hvtargid", "hydadcr", "adgrpid", "social_share", "starsleft", "skiptwisterog"],
+        "prefixes": ["pd_rd_", "pf_rd_"],
+        "pathPatterns": ["/ref=[^/]*"]
+      },
+      { "suffixes": ["rakuten.co.jp"], "names": ["scid", "sc2id", "iasid", "l-id", "l2-id", "s-id", "trflg", "bk"] },
+      {
+        "suffixes": ["temu.com"],
+        "names": ["_x_ads_account", "_x_ads_creative_id", "_x_ads_id", "_x_ads_set",
+                  "_x_ads_channel", "_x_ads_sub_channel", "_x_bg_adid", "_x_from",
+                  "_x_vst_scene", "_x_campaign", "_x_cid", "_x_sessn_id",
+                  "_x_channel_scene", "_x_channel_src", "adg_ctx", "mrk_rec",
+                  "_p_jump_id", "_p_rfs", "_bg_fs", "refer_page_el_sn", "refer_page_sn",
+                  "refer_page_name", "refer_page_id", "refer_source", "top_gallery_url",
+                  "spec_gallery_id", "freesia_scene", "share_img", "from_share"],
+        "prefixes": ["_x_ns_", "_oak_"]
+      },
+      { "suffixes": ["dmm.co.jp", "dmm.com"], "names": ["dmmref", "i3_ref", "i3_ord"] },
+      {
+        "suffixes": ["aliexpress.com", "aliexpress.us", "aliexpress.ru"],
+        "names": ["algo_pvid", "algo_expid", "algo_exp_id", "curpageloguid", "pdp_npi",
+                  "spm", "scm", "scm_id", "scm-url", "utparam", "utparam-url", "pvid",
+                  "gps-id", "ws_ab_test", "btsid"]
+      },
+      {
+        "suffixes": ["ebay.com", "ebay.co.uk", "ebay.de", "ebay.fr", "ebay.it", "ebay.es",
+                     "ebay.ca", "ebay.com.au", "ebay.at", "ebay.ch", "ebay.ie", "ebay.nl", "ebay.pl"],
+        "names": ["_trkparms", "_trksid", "_from", "amdata", "itmmeta", "itmprp", "ssspo", "sssrc", "ssuid"]
+      },
+      { "suffixes": ["apple.com"], "names": ["itscg", "itsct", "ct", "pt"] },
+      { "suffixes": ["yahoo.co.jp"], "names": ["sc_e", "sc_i", "mcr", "ei", "ark", "tpkgd"] },
+      { "suffixes": ["youtube.com"], "names": ["si", "feature", "kw"] },
+      { "suffixes": ["youtu.be"], "names": ["si", "feature"] },
+      { "suffixes": ["x.com", "twitter.com"], "names": ["s", "t", "ref_src", "ref_url"] }
+    ]
+  },
 
-  "//hostTrackingParams": "ホスト (サフィックス一致) ごとに追加で除去するパラメータ。汎用的に消すと壊れる名前をここで限定的に扱う。名前は小文字で記述する。",
-  "hostTrackingParams": [
-    {
-      "suffix": "amazon.co.jp",
-      "names": ["tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag",
-                "camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
-                "dib", "dib_tag", "content-id", "_encoding", "th"]
-    },
-    {
-      "suffix": "amazon.com",
-      "names": ["tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag",
-                "camp", "ref", "ref_", "psc", "qid", "sr", "sprefix", "crid",
-                "dib", "dib_tag", "content-id", "_encoding", "th"]
-    },
-    { "suffix": "rakuten.co.jp", "names": ["scid", "sc2id", "iasid", "rafcid", "l-id", "l2-id", "trflg", "bk"] },
-    { "suffix": "yahoo.co.jp", "names": ["sc_e", "sc_i", "mcr", "ei", "ark", "tpkgd"] },
-    { "suffix": "youtube.com", "names": ["si", "feature", "kw"] },
-    { "suffix": "youtu.be", "names": ["si", "feature"] },
-    { "suffix": "x.com", "names": ["s", "t", "ref_src", "ref_url"] },
-    { "suffix": "twitter.com", "names": ["s", "t", "ref_src", "ref_url"] }
-  ]
+  "//affiliate.markers": "パラメータの値からアフィリエイト経由と判断できる場合に、names / prefixes をアフィリエイト扱いにする。param の値が pattern (正規表現、大文字小文字を区別しない) に一致したときに適用する。suffixes が空なら全ホストが対象。DMM (utm_medium=dmm_affiliate) や DLsite (utm_medium=affiliate) は utm_source にアフィリエイト ID を入れるため、計測用の utm_* と区別するのに使う。楽天の scid=af_*、Yahoo!ショッピングのバリューコマース経由の sc_e=afvc_shp_* も同様。",
+  "affiliate": {
+    "prefixes": ["aff_"],
+    "names": [
+      "a8", "vc_lpp", "irclickid", "irgwc", "cjevent", "awc", "sscid",
+      "ranmid", "raneaid", "ransiteid", "admitad_uid", "tduid",
+      "utm_affiliate", "x-clickref"
+    ],
+    "hosts": [
+      {
+        "suffixes": [
+          "amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de", "amazon.fr",
+          "amazon.it", "amazon.es", "amazon.nl", "amazon.se", "amazon.pl",
+          "amazon.com.be", "amazon.com.tr", "amazon.ca", "amazon.com.mx", "amazon.com.br",
+          "amazon.com.au", "amazon.in", "amazon.sg", "amazon.ae", "amazon.sa", "amazon.eg"
+        ],
+        "names": ["tag", "linkcode", "linkid", "creative", "creativeasin", "ascsubtag", "camp",
+                  "associatetag", "asc_campaign", "asc_refurl", "asc_source"]
+      },
+      { "suffixes": ["rakuten.co.jp"], "names": ["rafcid"] },
+      { "suffixes": ["temu.com"], "names": ["refer_share_id", "refer_share_suin", "refer_share_channel"] },
+      { "suffixes": ["aliexpress.com", "aliexpress.us", "aliexpress.ru"], "names": ["sk", "dp", "af", "terminal_id", "mall_affr"] },
+      {
+        "suffixes": ["ebay.com", "ebay.co.uk", "ebay.de", "ebay.fr", "ebay.it", "ebay.es",
+                     "ebay.ca", "ebay.com.au", "ebay.at", "ebay.ch", "ebay.ie", "ebay.nl", "ebay.pl"],
+        "names": ["campid", "mkcid", "mkrid", "mkevt", "toolid", "customid"]
+      },
+      { "suffixes": ["apple.com"], "names": ["at"] },
+      { "suffixes": ["booking.com"], "names": ["aid", "label"] }
+    ],
+    "markers": [
+      { "suffixes": [], "param": "utm_medium", "pattern": "affiliate", "prefixes": ["utm_"] },
+      { "suffixes": ["rakuten.co.jp"], "param": "scid", "pattern": "^af_", "names": ["scid", "sc2id"] },
+      { "suffixes": ["yahoo.co.jp"], "param": "sc_e", "pattern": "^afvc", "names": ["sc_e"] }
+    ]
+  }
 }

@@ -74,17 +74,42 @@ const TRACKER_RULES = rules.trackers.map((tracker) => ({
     paths: tracker.paths.map((pattern) => new RegExp(pattern)),
 }));
 
-/** 前方一致で除去するクエリパラメータ。 */
-const TRACKING_PARAM_PREFIXES = rules.trackingParamPrefixes;
+/**
+ * パラメータの除去ルールを実行時の形に変換する。
+ * 名前は大文字小文字を区別しないため、すべて小文字にそろえる。
+ */
+function compileParamRules(category) {
+    const lower = (list) => (list || []).map((value) => value.toLowerCase());
+    const compileHost = (entry) => ({
+        suffixes: lower(entry.suffixes),
+        names: new Set(lower(entry.names)),
+        prefixes: lower(entry.prefixes),
+        pathPatterns: (entry.pathPatterns || []).map((pattern) => new RegExp(pattern, "gi")),
+    });
+    return {
+        names: new Set(lower(category.names)),
+        prefixes: lower(category.prefixes),
+        hosts: (category.hosts || []).map(compileHost),
+        markers: (category.markers || []).map((marker) => ({
+            ...compileHost(marker),
+            param: marker.param.toLowerCase(),
+            pattern: new RegExp(marker.pattern, "i"),
+        })),
+    };
+}
 
-/** 完全一致で除去するクエリパラメータ。 */
-const TRACKING_PARAM_NAMES = new Set(rules.trackingParamNames.map((name) => name.toLowerCase()));
+/** 計測用パラメータの除去ルール。 */
+const TRACKING_RULES = compileParamRules(rules.tracking);
 
-/** ホスト (サフィックス一致) ごとに追加で除去するパラメータ。 */
-const HOST_TRACKING_PARAMS = rules.hostTrackingParams.map((entry) => ({
-    suffix: entry.suffix.toLowerCase(),
-    names: entry.names.map((name) => name.toLowerCase()),
-}));
+/** アフィリエイト / 紹介報酬用パラメータの除去ルール。 */
+const AFFILIATE_RULES = compileParamRules(rules.affiliate);
+
+/** 除去オプションの既定値。指定がなければ両方を除去する。 */
+const DEFAULT_STRIP_OPTIONS = Object.freeze({ tracking: true, affiliate: true });
+
+/** 除去オプションを無効にするクエリパラメータ。値が "0" のとき無効になる。 */
+const STRIP_TRACKING_PARAM = "strip_tracking";
+const STRIP_AFFILIATE_PARAM = "strip_affiliate";
 
 /** エラーコード。画面に出す文言は src/shared/ui/app.js 側で管理する。 */
 const CODE_UNSUPPORTED_URL = "unsupported_url";
@@ -487,37 +512,100 @@ async function resolveDestination(target, hostMap) {
     throw new RedirectorError("too many redirect hops", 508, CODE_TOO_MANY_HOPS);
 }
 
-/** URL からトラッキング用パラメータを除去する。 */
-function stripTrackingParams(url) {
+/**
+ * URL から計測用 / アフィリエイト用のパラメータを除去する。
+ * どちらを除去するかは options で選ぶ。両方に当てはまるものはアフィリエイト
+ * として扱うため、アフィリエイトを残す指定なら計測用でも残る。
+ */
+function stripParams(url, options = DEFAULT_STRIP_OPTIONS) {
     const clean = new URL(url.toString());
+    const host = clean.hostname.toLowerCase();
+
+    if (options.tracking) {
+        clean.pathname = stripPath(host, clean.pathname, TRACKING_RULES);
+    }
+    if (options.affiliate) {
+        clean.pathname = stripPath(host, clean.pathname, AFFILIATE_RULES);
+    }
     if (!clean.search) {
         return clean;
     }
 
-    const host = clean.hostname.toLowerCase();
+    const marked = markedAffiliateRules(host, clean.searchParams);
     for (const name of [...clean.searchParams.keys()]) {
-        if (isTrackingParam(host, name)) {
+        const kind = paramKind(host, name, marked);
+        if ((kind === "affiliate" && options.affiliate) || (kind === "tracking" && options.tracking)) {
             clean.searchParams.delete(name);
         }
     }
     return clean;
 }
 
-function isTrackingParam(host, name) {
-    const lower = name.toLowerCase();
-    if (TRACKING_PARAM_NAMES.has(lower)) {
-        return true;
+/** パスに埋め込まれた計測情報 (Amazon の /ref=... など) を取り除く。 */
+function stripPath(host, pathname, category) {
+    let path = pathname;
+    for (const entry of category.hosts) {
+        if (entry.pathPatterns.length === 0 || !matchesAnyHost(host, entry.suffixes)) {
+            continue;
+        }
+        for (const pattern of entry.pathPatterns) {
+            path = path.replace(pattern, "");
+        }
     }
-    if (TRACKING_PARAM_PREFIXES.some((prefix) => lower.startsWith(prefix))) {
-        return true;
+    return path || "/";
+}
+
+/** パラメータの値からアフィリエイト経由と判断できたルールを返す。 */
+function markedAffiliateRules(host, searchParams) {
+    const values = new Map();
+    for (const [name, value] of searchParams) {
+        const lower = name.toLowerCase();
+        values.set(lower, [...(values.get(lower) || []), value]);
     }
-    return HOST_TRACKING_PARAMS.some(
-        (entry) => hostMatches(host, entry.suffix) && entry.names.includes(lower),
+    return AFFILIATE_RULES.markers.filter(
+        (marker) =>
+            (marker.suffixes.length === 0 || matchesAnyHost(host, marker.suffixes)) &&
+            (values.get(marker.param) || []).some((value) => marker.pattern.test(value)),
     );
+}
+
+/** パラメータを "affiliate" / "tracking" / "" (除去対象外) に分類する。 */
+function paramKind(host, name, markedRules) {
+    const lower = name.toLowerCase();
+    if (matchesCategory(host, lower, AFFILIATE_RULES) || markedRules.some((rule) => matchesNames(lower, rule))) {
+        return "affiliate";
+    }
+    if (matchesCategory(host, lower, TRACKING_RULES)) {
+        return "tracking";
+    }
+    return "";
+}
+
+function matchesCategory(host, name, category) {
+    return (
+        matchesNames(name, category) ||
+        category.hosts.some((entry) => matchesAnyHost(host, entry.suffixes) && matchesNames(name, entry))
+    );
+}
+
+function matchesNames(name, rule) {
+    return rule.names.has(name) || rule.prefixes.some((prefix) => name.startsWith(prefix));
+}
+
+function matchesAnyHost(host, suffixes) {
+    return suffixes.some((suffix) => hostMatches(host, suffix));
 }
 
 function hostMatches(host, suffix) {
     return host === suffix || host.endsWith(`.${suffix}`);
+}
+
+/** リクエストのクエリから除去オプションを読み取る。 */
+function stripOptions(searchParams) {
+    return {
+        tracking: searchParams.get(STRIP_TRACKING_PARAM) !== "0",
+        affiliate: searchParams.get(STRIP_AFFILIATE_PARAM) !== "0",
+    };
 }
 
 /**
@@ -660,7 +748,7 @@ async function handleAPI(url, hostMap) {
         return respond(
             {
                 original: raw,
-                destination: stripTrackingParams(result.final).toString(),
+                destination: stripParams(result.final, stripOptions(url.searchParams)).toString(),
                 hops: hopLabels(result.hops),
             },
             200,
@@ -690,7 +778,9 @@ async function handleRedirect(url, hostMap) {
         return textResponse(`${resolveStatus(err)} ${err.message}\n`, resolveStatus(err));
     }
 
-    const clean = stripTrackingParams(result.final);
+    // ルート付け替え運用ではクエリが上流のものなので、オプションは読まない。
+    const options = url.pathname === RESOLVE_ENDPOINT ? stripOptions(url.searchParams) : DEFAULT_STRIP_OPTIONS;
+    const clean = stripParams(result.final, options);
     console.log(`redirect: ${target.toString()} -> ${clean.toString()}`);
 
     return new Response(null, {
@@ -757,7 +847,7 @@ export {
     parseHostMap,
     resolveDestination,
     scriptRedirectTarget,
-    stripTrackingParams,
+    stripParams,
     targetURL,
     validateHopURL,
 };
